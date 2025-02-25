@@ -126,6 +126,138 @@ void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 	//max_step_length = max_sl_const + pivot;//DA FINIRE
 }
 
+void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
+    int min_inliers = 600;
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
+    ne.setSearchMethod(tree);
+    ne.setKSearch(50);
+
+    pcl::SACSegmentationFromNormals<pcl::PointXYZRGB, pcl::Normal> seg;
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_NORMAL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setNormalDistanceWeight(0.001);
+    seg.setDistanceThreshold(0.01);
+
+    while (cloud_remaining->points.size() > min_inliers) {
+        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+        ne.setInputCloud(cloud_remaining);
+        ne.compute(*cloud_normals);
+        seg.setInputNormals(cloud_normals);
+        seg.setInputCloud(cloud_remaining);
+        seg.segment(*inliers, *coefficients);
+
+        if (inliers->indices.size() < min_inliers) {
+            if (planes.size() == 0 and min_inliers > 200) {
+                min_inliers -= 50;
+                continue;
+            }
+            break;
+        }
+
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane(new pcl::PointCloud<pcl::PointXYZRGB>);
+        for (int index : inliers->indices) {
+            plane->points.push_back(cloud_remaining->points[index]);
+        }
+
+        planes.push_back(plane);
+        extract.setInputCloud(cloud_remaining);
+        extract.setIndices(inliers);
+        extract.setNegative(true);
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+        extract.filter(*cloud_filtered);
+        cloud_remaining.swap(cloud_filtered);
+    }
+    std::cout << "***Totally found " << planes.size() << " planes." << std::endl;
+}
+
+int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
+    float max_distance = 0;
+    int max_idx = 0;
+    for (int idx = 0; idx < planes.size(); idx++) {
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
+        float distance = 0;
+        for (const auto& point : plane->points) {
+            distance += point.y;
+        }
+        distance /= plane->points.size();
+        if (distance > max_distance) {
+            max_distance = distance;
+            max_idx = idx;
+        }
+    }
+    for (auto& point : planes[max_idx]->points) {
+        ground_cloud->points.push_back(point);
+    }
+    return max_idx;
+}
+
+void find_obstacles(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& remaining, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud){
+//    for (std::vector<int>::iterator it = remaining->begin(); it != remaining->end(); ++it) {
+//        uint8_t r = 255, g = 0, b = 255;
+//        uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
+//        input_cloud->at(*it).rgb = *reinterpret_cast<float*>(&rgb); //color the obstacle point (green)
+//        obs_cloud->points.push_back(input_cloud->at(*it)); //save point into obstacles pointcloud
+//    }
+}
+
+void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud_original,
+                         std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                         bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang) {
+    if(!alignment_z) {
+        Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
+        Eigen::Matrix3f covariance_matrix;
+        Eigen::Vector4f centroid;
+        pcl::compute3DCentroid(*ground_cloud, centroid);
+        pcl::computeCovarianceMatrixNormalized(*ground_cloud, centroid, covariance_matrix);
+        Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver(covariance_matrix);
+        Eigen::Vector3f normal = solver.eigenvectors().col(0);
+        float tilt;
+        for (auto plane: planes) {
+            tilt = rotate_point_cloud_plane(plane, n_z, normal.normalized());
+        }
+        tilt = rotate_point_cloud_plane(ground_cloud, n_z, normal.normalized());
+        tilt = rotate_point_cloud_plane(input_cloud, n_z, normal.normalized());
+        tilt = rotate_point_cloud_plane(input_cloud_original, n_z, normal.normalized());
+        if (!ref_acquired) {
+            reference_tilt = tilt;
+            ref_acquired = true;
+        } else {
+            tilt_ang = tilt;
+            alignment_z = true;
+        }
+    }
+}
+
+void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud, int ground_plan_index) {
+    int jj = 0, zz=0, rr=255;
+    for (int idx = 0; idx < planes.size(); idx++) {
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
+        std::cout << "Plane " << idx << " has " << plane->points.size() << " points." << std::endl;
+        if (idx == ground_plan_index) {
+            continue;
+        }
+        uint8_t r = rr % 256, g = jj%256, b = zz%256;
+        uint32_t rgb = (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
+        jj += 130;
+        zz += 75;
+        rr -= 50;
+
+        for (auto& point : plane->points) {
+            point.rgb = *reinterpret_cast<float*>(&rgb);
+            planes_cloud->points.push_back(point);
+        }
+    }
+}
+
 int main (int argc, char** argv) {
 	// Initialize ROS
 	ros::init (argc, argv, "robotic_vision");
@@ -139,6 +271,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub = nh.advertise<pcl::PCLPointCloud2> ("outcloud", 1);
 	ros::Publisher pub2 = nh.advertise<pcl::PCLPointCloud2> ("obstacles", 1);
 	ros::Publisher pub3 = nh.advertise<pcl::PCLPointCloud2> ("tracks", 1);
+    ros::Publisher pub_planes = nh.advertise<pcl::PCLPointCloud2> ("planes", 1);
 	ros::Publisher pub4 = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape_raw", 1);
 	//ros::Publisher pub5 = nh.advertise<std_msgs::Bool> ("next_swing_leg", 1);
 	ros::Publisher pub6 = nh.advertise<std_msgs::Float32> ("CoM_height_raw", 1);
@@ -206,75 +339,88 @@ int main (int argc, char** argv) {
 	 		//variables used for z-axis transalation
 			float camera_offs_z=0.0;
 			int ground_points=0;
-			bool alignment_z=false; //to check whether alignment on the z-axis has been performed 
+			bool alignment_z=false; //to check whether alignment on the z-axis has been performed
 			float tilt_ang;
 			
 			pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //pointcloud containing ground plane points
 			ground_cloud->header = input_cloud->header; //needed to display in the right frame
 			ground_cloud->height=1; //unordered cloud
-	  		// While 90% of the original cloud is still there 
-	  		
-	  		while (remaining->size () > 0.9* nr_points) { //so that we find only 1 plane. This mechanism should be upgraded if used outdoor
-	  		
-	    			// Segment the largest planar component from the remaining cloud
+
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud_original(new pcl::PointCloud<pcl::PointXYZRGB>);
+            *input_cloud_original = *input_cloud;
+            input_cloud_original->header = input_cloud->header;
+            input_cloud_original->height = 1;
+            input_cloud_original->width = input_cloud->size();
+	  		while (remaining->size () > 0.1 * nr_points) {
 	    			seg.setIndices (remaining);
 	    			seg.segment (*inliers, *coefficients);
 	    			if (inliers->indices.size () == 0) break;
-	    			
-	    			//ALIGN THE POINTCLOUD WITH RVIZ FRAME(Z-AXIS)------------------------------------------------------------
-	    			if(!alignment_z){
-	    				Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
-	    				Eigen::Vector3f n_plane(coefficients->values[0],coefficients->values[1],coefficients->values[2]);
-	  					n_plane.normalize();
-	  					if(!ref_acquired) {
-	  						reference_tilt = rotate_point_cloud_plane(input_cloud, n_z, n_plane);
-	  						ref_acquired=true;
-	  					}
-	    				else tilt_ang = rotate_point_cloud_plane(input_cloud, n_z, n_plane);
-	    				alignment_z=true;
-					}
-	    			
-	    			
-	    			// Extract the ground plane inliers
+
 	    			std::vector<int>::iterator it = remaining->begin();
-	    			
-				for (size_t i = 0; i < inliers->indices.size();i++) {
-				      int curr = inliers->indices[i];
-				      // Remove it from further consideration.
-				      while (it != remaining->end() && *it < curr) { ++it; }
-				      if (it == remaining->end()) break;
-				      if (*it == curr) {
-				      	//ESTIMATE MEAN DISTANCE BETWEEN CAMERA AND GROUND ON THE Z-AXIS
-				      	camera_offs_z+= input_cloud->at(*it).z;
-				      	ground_points++;
-				      	ground_cloud->points.push_back(input_cloud->at(*it));
-				 		it = remaining->erase(it); //remove ground points from outliers
-				      }
-				}
-				i++;
+                    for (size_t i = 0; i < inliers->indices.size();i++) {
+                          int curr = inliers->indices[i];
+                          while (it != remaining->end() && *it < curr) { ++it; }
+                          if (it == remaining->end()) break;
+                          if (*it == curr) {
+                            ground_cloud->points.push_back(input_cloud->at(*it));
+                            it = remaining->erase(it);
+                          }
+                    }
+                    i++;
 			}
-			ground_cloud->width = ground_cloud->points.size(); //update dimension of the cloud
-			//PROCESS OUTLIERS (OBSTACLES)--------------------------------------------------------------------------
-			pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //ALL obstacle points
-  			
-  			obs_cloud->header = input_cloud->header; //needed to display in the right frame
-  			
-			obs_cloud->width = remaining->size();
-			obs_cloud->height=1;
-			
+
 			//track bounds and conditions
 			float high_obs_bound_y=max_step_length; //nearest obstacle w. height >20 cm 
 			float bound_1 = (dist_bt_feet + feet_width + 0.02f);
 	    	float bound_2 = (dist_bt_feet-0.02f);
 	    	float bound_3 = max_step_length + 0.5f;
 	    	bool condition_1, condition_2, condition_3;
-	    	
-			for (std::vector<int>::iterator it = remaining->begin(); it != remaining->end(); ++it) {
-	    			uint8_t r = 255, g = 0, b = 255;
-	    			uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
-	    			input_cloud->at(*it).rgb = *reinterpret_cast<float*>(&rgb); //color the obstacle point (green)
-	    			obs_cloud->points.push_back(input_cloud->at(*it)); //save point into obstacles pointcloud
-	  		}
+
+            std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes;
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining(new pcl::PointCloud<pcl::PointXYZRGB>);
+            *cloud_remaining = *ground_cloud;
+
+            multiple_planes(planes, input_cloud, cloud_remaining);
+            if(planes.size() == 0) {
+                std::cout << "No planes found." << std::endl;
+                break;
+            }
+
+            ground_cloud->points.clear();
+            ground_cloud->header = input_cloud->header;
+            ground_cloud->height=1;
+            int ground_plan_index = define_ground_plane(planes, ground_cloud, camera_offs_z, ground_points);
+            align_point_cloud_z(ground_cloud, input_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
+            for (auto& point : planes[ground_plan_index]->points) {
+                 camera_offs_z += point.z;
+                 ground_points++;
+            }
+
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr planes_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+            planes_cloud->header = input_cloud->header;
+            planes_cloud->width = remaining->size();
+            planes_cloud->height=1;
+            color_planes(planes, planes_cloud, ground_plan_index);
+
+            //PROCESS OUTLIERS (OBSTACLES)--------------------------------------------------------------------------
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+            obs_cloud->header = input_cloud->header;
+            obs_cloud->height=1;
+
+            
+
+
+//            for (std::vector<int>::iterator it = remaining->begin(); it != remaining->end(); ++it) {
+//                uint8_t r = 255, g = 0, b = 255;
+//                uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
+//                input_cloud->at(*it).rgb = *reinterpret_cast<float*>(&rgb);
+//                obs_cloud->points.push_back(input_cloud->at(*it));
+//            }
+
+            ground_cloud->width = ground_cloud->points.size();
+            obs_cloud->width = obs_cloud->size();
+            planes_cloud->width = planes_cloud->size();
+
 	  		//ALIGN THE POINTCLOUD WITH RVIZ FRAME(X-AXIS)------------------------------------------------------------
 	  		
 	  		if(x_alignment){
@@ -303,6 +449,7 @@ int main (int argc, char** argv) {
 		  		tilt_ang_x = rotate_point_cloud_plane_v2(input_cloud,n_align,n_x);
 		  		std::cout<<"Rotation around x-axis is: "<<tilt_ang_x<<std::endl;
 		  		rotate_point_cloud_plane_v2(ground_cloud,n_align,n_x);
+                rotate_point_cloud_plane_v2(planes_cloud,n_align,n_x);
 		  		rotate_point_cloud_plane_v2(obs_cloud,n_align,n_x);
 	  		}
 	  		
@@ -315,6 +462,7 @@ int main (int argc, char** argv) {
     		pcl::transformPointCloud (*input_cloud, *input_cloud, offset_transform); // Apply traslation
     		pcl::transformPointCloud (*ground_cloud, *ground_cloud, offset_transform);
     		pcl::transformPointCloud (*obs_cloud, *obs_cloud, offset_transform);
+            pcl::transformPointCloud (*planes_cloud, *planes_cloud, offset_transform);
 	  		//TRACKS PROCESSING-----------*CURRENTLY UNDER DEVELOPMENT*-------------------------------------------------------------------------------
 	  		pcl::PointCloud<pcl::PointXYZRGB>::Ptr ltrack_obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //obstacle points inside the left track
   			pcl::PointCloud<pcl::PointXYZRGB>::Ptr rtrack_obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //obstacle points inside the right track
@@ -643,6 +791,9 @@ int main (int argc, char** argv) {
 	  		pcl::PCLPointCloud2 outcloud3;
 	  		pcl::toPCLPointCloud2(*ground_cloud, outcloud3); //ground only
 	  		pub3.publish (outcloud3);
+            pcl::PCLPointCloud2 outcloud4;
+            pcl::toPCLPointCloud2(*planes_cloud, outcloud4); //planes only
+            pub_planes.publish(outcloud4);
 	  		
 	  		//publish obstacle shape of swing leg in sagittal plane
 	  		std::vector<float> o_p;

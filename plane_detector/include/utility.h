@@ -26,6 +26,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl_ros/point_cloud.h>
 #include <std_msgs/Int8.h>
+#include <pcl/features/normal_3d.h>
 
 struct cmp_xyz {
 	inline bool operator() (const pcl::PointXYZ& pt1, const pcl::PointXYZ& pt2){
@@ -129,7 +130,18 @@ float euclidean_dist(float p1_x, float p1_y, float p2_x, float p2_y) {
 float calc_angle_from_side_sin(float side, float hypotenuse ){ 
 return asin(side/hypotenuse);
 
-} 
+}
 
+void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining);
 
+int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points);
 
+void find_obstacles(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& remaining, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud);
+
+void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud_original,
+                         std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                         bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang);
+
+void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud, int ground_plan_index);
