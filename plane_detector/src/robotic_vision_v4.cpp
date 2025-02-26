@@ -1,4 +1,8 @@
 #include "utility.h"
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <Eigen/Dense>
+#include <iostream>
 using namespace std::chrono;
 
 //global vars
@@ -23,9 +27,27 @@ float leaf_size;
 int pc_counter =0; //used to create a point cloud buffer
 pcl::PointCloud<pcl::PointXYZRGB> cloud_buffer[5]; //buffer of size 5
 
+void kalmanFilterPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, KalmanFilter& kfX, KalmanFilter& kfY, KalmanFilter& kfZ) {
+    for (auto& point : *cloud) {
+        Eigen::Vector3d z(point.x, point.y, point.z);
 
+        kfX.predict();
+        kfY.predict();
+        kfZ.predict();
 
+        kfX.update(Eigen::Vector3d(point.x, 0, 0));
+        kfY.update(Eigen::Vector3d(0, point.y, 0));
+        kfZ.update(Eigen::Vector3d(0, 0, point.z));
 
+        Eigen::Vector3d newStateX = kfX.getState();
+        Eigen::Vector3d newStateY = kfY.getState();
+        Eigen::Vector3d newStateZ = kfZ.getState();
+
+        point.x = newStateX(0);
+        point.y = newStateY(1);
+        point.z = newStateZ(2);
+    }
+}
 
 void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 	pcl::PCLPointCloud2::Ptr temp_cloud(new pcl::PCLPointCloud2);
@@ -126,10 +148,11 @@ void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 	//max_step_length = max_sl_const + pivot;//DA FINIRE
 }
 
-void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
-    int min_inliers = 600;
+void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                     pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
+                     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
+    int min_inliers = 700;
     pcl::ExtractIndices<pcl::PointXYZRGB> extract;
-
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
 
@@ -166,14 +189,42 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
             plane->points.push_back(cloud_remaining->points[index]);
         }
 
-        planes.push_back(plane);
         extract.setInputCloud(cloud_remaining);
         extract.setIndices(inliers);
         extract.setNegative(true);
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
         extract.filter(*cloud_filtered);
         cloud_remaining.swap(cloud_filtered);
+
+        pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree_clusters(new pcl::search::KdTree<pcl::PointXYZRGB>);
+        tree_clusters->setInputCloud(cloud_remaining);
+        std::vector<pcl::PointIndices> cluster_indices;
+        pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+        ec.setClusterTolerance(0.04);
+        ec.setMinClusterSize(30);
+        ec.setMaxClusterSize(300);
+        ec.setSearchMethod(tree_clusters);
+        ec.setInputCloud(cloud_remaining);
+        ec.extract(cluster_indices);
+        for (const auto& cluster : cluster_indices) {
+            uint8_t r = 255, g = 0, b = 255;
+            for (const auto& index : cluster.indices) {
+                float distance = coefficients->values[0] * cloud_remaining->points[index].x +
+                                 coefficients->values[1] * cloud_remaining->points[index].y +
+                                 coefficients->values[2] * cloud_remaining->points[index].z +
+                                 coefficients->values[3];
+                if (std::abs(distance) < 0.04) {
+                    plane->points.push_back(cloud_remaining->points[index]);
+                    continue;
+                }
+                uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
+                input_cloud->points.push_back(cloud_remaining->points[index]);
+                input_cloud->points.back().rgb = *reinterpret_cast<float*>(&rgb);
+            }
+        }
+        planes.push_back(plane);
     }
+
     std::cout << "***Totally found " << planes.size() << " planes." << std::endl;
 }
 
@@ -198,17 +249,9 @@ int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> plan
     return max_idx;
 }
 
-void find_obstacles(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& remaining, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud){
-//    for (std::vector<int>::iterator it = remaining->begin(); it != remaining->end(); ++it) {
-//        uint8_t r = 255, g = 0, b = 255;
-//        uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
-//        input_cloud->at(*it).rgb = *reinterpret_cast<float*>(&rgb); //color the obstacle point (green)
-//        obs_cloud->points.push_back(input_cloud->at(*it)); //save point into obstacles pointcloud
-//    }
-}
-
 void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
                          pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud,
                          pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud_original,
                          std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                          bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang) {
@@ -226,6 +269,7 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
         }
         tilt = rotate_point_cloud_plane(ground_cloud, n_z, normal.normalized());
         tilt = rotate_point_cloud_plane(input_cloud, n_z, normal.normalized());
+        tilt = rotate_point_cloud_plane(obs_cloud, n_z, normal.normalized());
         tilt = rotate_point_cloud_plane(input_cloud_original, n_z, normal.normalized());
         if (!ref_acquired) {
             reference_tilt = tilt;
@@ -309,12 +353,14 @@ int main (int argc, char** argv) {
 	//float min_height_constraint = 0.9; //max CoM height allowed: 0.9 * leg length (SHOULD BE A PARAM??)
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
 	//max_step_length = max_sl_const; 
-	
-	
+
+    std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> history;
+    int history_size = 100; // Numero di frame da considerare
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
-	std::cout<<"Threshold: " << ransac_th << std::endl;	
-	
-	while(ros::ok()){
+	std::cout<<"Threshold: " << ransac_th << std::endl;
+
+    KalmanFilter kfX, kfY, kfZ;
+    while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
 			auto start= high_resolution_clock::now();
@@ -351,23 +397,9 @@ int main (int argc, char** argv) {
             input_cloud_original->header = input_cloud->header;
             input_cloud_original->height = 1;
             input_cloud_original->width = input_cloud->size();
-	  		while (remaining->size () > 0.1 * nr_points) {
-	    			seg.setIndices (remaining);
-	    			seg.segment (*inliers, *coefficients);
-	    			if (inliers->indices.size () == 0) break;
 
-	    			std::vector<int>::iterator it = remaining->begin();
-                    for (size_t i = 0; i < inliers->indices.size();i++) {
-                          int curr = inliers->indices[i];
-                          while (it != remaining->end() && *it < curr) { ++it; }
-                          if (it == remaining->end()) break;
-                          if (*it == curr) {
-                            ground_cloud->points.push_back(input_cloud->at(*it));
-                            it = remaining->erase(it);
-                          }
-                    }
-                    i++;
-			}
+            kalmanFilterPointCloud(input_cloud, kfX, kfY, kfZ);
+            *ground_cloud = *input_cloud;
 
 			//track bounds and conditions
 			float high_obs_bound_y=max_step_length; //nearest obstacle w. height >20 cm 
@@ -379,8 +411,10 @@ int main (int argc, char** argv) {
             std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes;
             pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining(new pcl::PointCloud<pcl::PointXYZRGB>);
             *cloud_remaining = *ground_cloud;
-
-            multiple_planes(planes, input_cloud, cloud_remaining);
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+            obs_cloud->header = input_cloud->header;
+            obs_cloud->height=1;
+            multiple_planes(planes, obs_cloud, cloud_remaining);
             if(planes.size() == 0) {
                 std::cout << "No planes found." << std::endl;
                 break;
@@ -390,7 +424,7 @@ int main (int argc, char** argv) {
             ground_cloud->header = input_cloud->header;
             ground_cloud->height=1;
             int ground_plan_index = define_ground_plane(planes, ground_cloud, camera_offs_z, ground_points);
-            align_point_cloud_z(ground_cloud, input_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
+            align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
             for (auto& point : planes[ground_plan_index]->points) {
                  camera_offs_z += point.z;
                  ground_points++;
@@ -401,21 +435,6 @@ int main (int argc, char** argv) {
             planes_cloud->width = remaining->size();
             planes_cloud->height=1;
             color_planes(planes, planes_cloud, ground_plan_index);
-
-            //PROCESS OUTLIERS (OBSTACLES)--------------------------------------------------------------------------
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-            obs_cloud->header = input_cloud->header;
-            obs_cloud->height=1;
-
-            
-
-
-//            for (std::vector<int>::iterator it = remaining->begin(); it != remaining->end(); ++it) {
-//                uint8_t r = 255, g = 0, b = 255;
-//                uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
-//                input_cloud->at(*it).rgb = *reinterpret_cast<float*>(&rgb);
-//                obs_cloud->points.push_back(input_cloud->at(*it));
-//            }
 
             ground_cloud->width = ground_cloud->points.size();
             obs_cloud->width = obs_cloud->size();
