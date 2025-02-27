@@ -151,7 +151,7 @@ void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
-    int min_inliers = 700;
+    int min_inliers = 500;
     pcl::ExtractIndices<pcl::PointXYZRGB> extract;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -222,7 +222,13 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
                 input_cloud->points.back().rgb = *reinterpret_cast<float*>(&rgb);
             }
         }
-        planes.push_back(plane);
+
+        Eigen::Vector3f normal(coefficients->values[0], coefficients->values[1], coefficients->values[2]);
+        normal.normalize();
+        if (std::abs(normal.z()) > 0.7) {
+            planes.push_back(plane);
+        }
+
     }
 
     std::cout << "***Totally found " << planes.size() << " planes." << std::endl;
