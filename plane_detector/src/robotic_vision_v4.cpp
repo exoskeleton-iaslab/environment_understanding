@@ -27,28 +27,6 @@ float leaf_size;
 int pc_counter =0; //used to create a point cloud buffer
 pcl::PointCloud<pcl::PointXYZRGB> cloud_buffer[5]; //buffer of size 5
 
-void kalmanFilterPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, KalmanFilter& kfX, KalmanFilter& kfY, KalmanFilter& kfZ) {
-    for (auto& point : *cloud) {
-        Eigen::Vector3d z(point.x, point.y, point.z);
-
-        kfX.predict();
-        kfY.predict();
-        kfZ.predict();
-
-        kfX.update(Eigen::Vector3d(point.x, 0, 0));
-        kfY.update(Eigen::Vector3d(0, point.y, 0));
-        kfZ.update(Eigen::Vector3d(0, 0, point.z));
-
-        Eigen::Vector3d newStateX = kfX.getState();
-        Eigen::Vector3d newStateY = kfY.getState();
-        Eigen::Vector3d newStateZ = kfZ.getState();
-
-        point.x = newStateX(0);
-        point.y = newStateY(1);
-        point.z = newStateZ(2);
-    }
-}
-
 void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 	pcl::PCLPointCloud2::Ptr temp_cloud(new pcl::PCLPointCloud2);
 	*temp_cloud = *cloud_blob;
@@ -208,13 +186,28 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
         ec.extract(cluster_indices);
         for (const auto& cluster : cluster_indices) {
             uint8_t r = 255, g = 0, b = 255;
+            float min_y = 1000, max_y = -1000, min_x = 1000, max_x = -1000;
             for (const auto& index : cluster.indices) {
                 float distance = coefficients->values[0] * cloud_remaining->points[index].x +
                                  coefficients->values[1] * cloud_remaining->points[index].y +
                                  coefficients->values[2] * cloud_remaining->points[index].z +
                                  coefficients->values[3];
-                if (std::abs(distance) < 0.04) {
-                    plane->points.push_back(cloud_remaining->points[index]);
+                if (std::abs(distance) < 0.03) {
+                    continue;
+                }
+                if (cloud_remaining->points[index].y < min_y) {
+                    min_y = cloud_remaining->points[index].y;
+                }
+                if (cloud_remaining->points[index].y > max_y) {
+                    max_y = cloud_remaining->points[index].y;
+                }
+                if (cloud_remaining->points[index].x < min_x) {
+                    min_x = cloud_remaining->points[index].x;
+                }
+                if (cloud_remaining->points[index].x > max_x) {
+                    max_x = cloud_remaining->points[index].x;
+                }
+                if (std::abs(max_y - min_y) > 0.2 || std::abs(max_x - min_x) > 0.2) {
                     continue;
                 }
                 uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
@@ -283,6 +276,47 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
         } else {
             tilt_ang = tilt;
             alignment_z = true;
+        }
+    }
+}
+
+void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud2(new pcl::PointCloud<pcl::PointXYZRGB>);
+    obs_cloud2->header = obs_cloud->header;
+    obs_cloud2->height = 1;
+    obs_cloud2->width = obs_cloud->size();
+    *obs_cloud2 = *obs_cloud;
+
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree_clusters(new pcl::search::KdTree<pcl::PointXYZRGB>);
+    tree_clusters->setInputCloud(obs_cloud2);
+
+    std::vector<pcl::PointIndices> cluster_indices;
+    pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+    ec.setClusterTolerance(0.04);
+    ec.setMinClusterSize(30);
+    ec.setMaxClusterSize(300);
+    ec.setSearchMethod(tree_clusters);
+    ec.setInputCloud(obs_cloud2);
+    ec.extract(cluster_indices);
+
+    obs_cloud->points.clear();
+    std::vector<std::vector<pcl::PointXYZRGB>> current_clusters;
+
+    for (const auto& cluster : cluster_indices) {
+        std::vector<pcl::PointXYZRGB> single_cluster;
+        for (const auto& index : cluster.indices) {
+            single_cluster.push_back(obs_cloud2->points[index]);
+        }
+        current_clusters.push_back(single_cluster);
+    }
+
+    for (const auto& cluster : current_clusters) {
+        uint8_t r = 255, g = 0, b = 255;
+        for (const auto& point : cluster) {
+            pcl::PointXYZRGB colored_point = point;
+            uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
+            colored_point.rgb = *reinterpret_cast<float*>(&rgb);
+            obs_cloud->points.push_back(colored_point);
         }
     }
 }
@@ -358,14 +392,10 @@ int main (int argc, char** argv) {
 	ros::param::get("~x_alignment", x_alignment);
 	//float min_height_constraint = 0.9; //max CoM height allowed: 0.9 * leg length (SHOULD BE A PARAM??)
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
-	//max_step_length = max_sl_const; 
+	//max_step_length = max_sl_const;
 
-    std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> history;
-    int history_size = 100; // Numero di frame da considerare
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
-
-    KalmanFilter kfX, kfY, kfZ;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -403,8 +433,6 @@ int main (int argc, char** argv) {
             input_cloud_original->header = input_cloud->header;
             input_cloud_original->height = 1;
             input_cloud_original->width = input_cloud->size();
-
-            kalmanFilterPointCloud(input_cloud, kfX, kfY, kfZ);
             *ground_cloud = *input_cloud;
 
 			//track bounds and conditions
@@ -430,6 +458,9 @@ int main (int argc, char** argv) {
             ground_cloud->header = input_cloud->header;
             ground_cloud->height=1;
             int ground_plan_index = define_ground_plane(planes, ground_cloud, camera_offs_z, ground_points);
+
+            group_obstacles(obs_cloud);
+
             align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
             for (auto& point : planes[ground_plan_index]->points) {
                  camera_offs_z += point.z;

@@ -143,45 +143,5 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
                          std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                          bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang);
 
+void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud);
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud, int ground_plan_index);
-
-class KalmanFilter {
-public:
-    KalmanFilter() {
-        x_ = Eigen::Vector3d(0, 0, 0);
-        P_ = Eigen::Matrix3d::Identity() * 1000;
-        F_ = Eigen::Matrix3d::Identity();
-        H_ = Eigen::Matrix3d::Identity();
-        Q_ = Eigen::Matrix3d::Identity() * 1.5;  // process noise
-        R_ = Eigen::Matrix3d::Identity() * 0.15;  // measurement noise
-        u_ = Eigen::Vector3d(0, 0, 0);
-    }
-
-    void predict() {
-        x_ = F_ * x_ + u_;  // New state
-        P_ = F_ * P_ * F_.transpose() + Q_;  // New covariance
-    }
-
-    void update(const Eigen::Vector3d& z) {
-        Eigen::Matrix3d S = H_ * P_ * H_.transpose() + R_;
-        Eigen::Matrix3d K = P_ * H_.transpose() * S.inverse(); // Kalman gain
-
-        x_ = x_ + K * (z - H_ * x_);
-        P_ = (Eigen::Matrix3d::Identity() - K * H_) * P_; // Update covariance
-    }
-
-    Eigen::Vector3d getState() const {
-        return x_;
-    }
-
-private:
-    Eigen::Vector3d x_;  // Sate: (X, Y, Z)
-    Eigen::Matrix3d P_;  // Covariance
-    Eigen::Matrix3d F_;  // Transition matrix
-    Eigen::Matrix3d H_;  // Observation matrix
-    Eigen::Matrix3d Q_;  // Process noise
-    Eigen::Matrix3d R_;  // Measurement noise
-    Eigen::Vector3d u_;  // Control vector
-};
-
-void kalmanFilterPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, KalmanFilter& kfX, KalmanFilter& kfY, KalmanFilter& kfZ);
