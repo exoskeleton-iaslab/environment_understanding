@@ -224,7 +224,7 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
 
     }
 
-    std::cout << "***Totally found " << planes.size() << " planes." << std::endl;
+    std::cout << "Totally found " << planes.size() << " planes." << std::endl;
 }
 
 int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
@@ -280,6 +280,13 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
     }
 }
 
+void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float y){
+    for (auto& point : points->points) {
+        point.z += z;
+        point.y -= y;
+    }
+}
+
 void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud2(new pcl::PointCloud<pcl::PointXYZRGB>);
     obs_cloud2->header = obs_cloud->header;
@@ -321,14 +328,11 @@ void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
     }
 }
 
-void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud, int ground_plan_index) {
+void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud) {
     int jj = 0, zz=0, rr=255;
     for (int idx = 0; idx < planes.size(); idx++) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
         std::cout << "Plane " << idx << " has " << plane->points.size() << " points." << std::endl;
-        if (idx == ground_plan_index) {
-            continue;
-        }
         uint8_t r = rr % 256, g = jj%256, b = zz%256;
         uint32_t rgb = (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
         jj += 130;
@@ -356,6 +360,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub2 = nh.advertise<pcl::PCLPointCloud2> ("obstacles", 1);
 	ros::Publisher pub3 = nh.advertise<pcl::PCLPointCloud2> ("tracks", 1);
     ros::Publisher pub_planes = nh.advertise<pcl::PCLPointCloud2> ("planes", 1);
+    ros::Publisher pub_ground = nh.advertise<pcl::PCLPointCloud2> ("ground", 1);
 	ros::Publisher pub4 = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape_raw", 1);
 	//ros::Publisher pub5 = nh.advertise<std_msgs::Bool> ("next_swing_leg", 1);
 	ros::Publisher pub6 = nh.advertise<std_msgs::Float32> ("CoM_height_raw", 1);
@@ -396,6 +401,7 @@ int main (int argc, char** argv) {
 
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
+    float camera_height = 0.90;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -462,20 +468,93 @@ int main (int argc, char** argv) {
             group_obstacles(obs_cloud);
 
             align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
+            float mean_ground_z = 0.0, mean_ground_y = 0.0;
             for (auto& point : planes[ground_plan_index]->points) {
                  camera_offs_z += point.z;
                  ground_points++;
+                 mean_ground_y += point.y;
             }
-
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr planes_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-            planes_cloud->header = input_cloud->header;
-            planes_cloud->width = remaining->size();
-            planes_cloud->height=1;
-            color_planes(planes, planes_cloud, ground_plan_index);
+            mean_ground_z = camera_offs_z / ground_points;
+            mean_ground_y /= ground_points;
 
             ground_cloud->width = ground_cloud->points.size();
             obs_cloud->width = obs_cloud->size();
+
+            int closest_plane_index = -1;
+            float high_step = 0.0, current_angle = 0.0;
+            float min_distance = 1000000;
+            for (int idx = 0; idx < planes.size(); idx++) {
+                if (idx == ground_plan_index) {
+                    continue;
+                }
+                float distance, current_high = 0.0;
+                for (auto& point : planes[idx]->points) {
+                    distance += std::abs(ground_cloud->points[0].x * point.x + ground_cloud->points[0].y * point.y + ground_cloud->points[0].z * point.z + ground_cloud->points[0].z);
+                    current_high += std::abs(point.z - mean_ground_z);
+                }
+                current_high /= planes[idx]->points.size();
+                distance /= planes[idx]->points.size();
+                std::cout << "$$$ Distance to plane " << idx << " is " << distance << std::endl;
+                std::cout << "$$$ Min distance is " << min_distance << std::endl;
+                std::cout << "$$$ High step is " << current_high << std::endl;
+                std::cout << "$$$ Feats length is " << feet_length << std::endl;
+                std::cout << "$$$ Mean Ground Y is " << mean_ground_y << std::endl;
+                std::cout << "$$$ Current angle is " << current_angle << std::endl;
+                if (distance < min_distance && feet_length > mean_ground_y) {
+                    min_distance = distance;
+                    closest_plane_index = idx;
+                    high_step = current_high;
+                    Eigen::Matrix3f covariance_matrix_plane;
+                    Eigen::Vector4f centroid_plane;
+                    pcl::compute3DCentroid(*planes[idx], centroid_plane);
+                    pcl::computeCovarianceMatrixNormalized(*planes[idx], centroid_plane, covariance_matrix_plane);
+                    Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver_plane(covariance_matrix_plane);
+                    Eigen::Vector3f normal_plane = solver_plane.eigenvectors().col(0);
+                    current_angle = std::acos(normal_plane.dot(Eigen::Vector3f(0.0f, 0.0f, 1.0f)));
+                }
+            }
+            if (closest_plane_index == -1) {
+                std::cout << "No suitable plane found." << std::endl;
+                closest_plane_index = 0;
+                planes[0]->points.clear();
+                for (auto& point : ground_cloud->points) {
+                    planes[0]->points.push_back(point);
+                }
+            }
+            planes[closest_plane_index]->header = ground_cloud->header;
+            planes[closest_plane_index]->height = 1;
+            planes[closest_plane_index]->width = planes[closest_plane_index]->points.size();
+
+            std::cout << "***Closest plane to ground is " << closest_plane_index << std::endl;
+            std::cout << "************************************************************ High step is " << high_step << std::endl;
+            std::cout << "************************************************************ Angle is " << current_angle << std::endl;
+
+            if (std::abs(std::abs(mean_ground_z) - camera_height) > 0.05 && std::abs(current_angle) > 0.1) {
+                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
+                pcl::PointCloud<pcl::PointXYZRGB>::Ptr build_ground(new pcl::PointCloud<pcl::PointXYZRGB>);
+                float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
+                float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
+                for (auto point : ground_cloud->points) {
+                    int sign = (point.z > 0) ? 1 : (point.z < 0) ? -1 : 0;
+                    point.z += dist_z * sign;
+                    build_ground->points.push_back(point);
+                }
+                transpose_z(obs_cloud, dist_z, 0.0);
+                transpose_z(input_cloud, dist_z, 0.0);
+                transpose_z(input_cloud_original, dist_z, 0.0);
+                for(auto& plane : planes) {
+                    transpose_z(plane, dist_z, 0.0);
+                }
+                transpose_z(build_ground, dist_z, dist_y);
+                planes.push_back(build_ground);
+                *ground_cloud = *build_ground;
+            }
+
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr planes_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+            color_planes(planes, planes_cloud);
+            planes_cloud->header = input_cloud->header;
             planes_cloud->width = planes_cloud->size();
+            planes_cloud->height=1;
 
 	  		//ALIGN THE POINTCLOUD WITH RVIZ FRAME(X-AXIS)------------------------------------------------------------
 	  		
@@ -507,6 +586,7 @@ int main (int argc, char** argv) {
 		  		rotate_point_cloud_plane_v2(ground_cloud,n_align,n_x);
                 rotate_point_cloud_plane_v2(planes_cloud,n_align,n_x);
 		  		rotate_point_cloud_plane_v2(obs_cloud,n_align,n_x);
+                rotate_point_cloud_plane_v2(planes[closest_plane_index],n_align,n_x);
 	  		}
 	  		
 	  		
@@ -519,6 +599,7 @@ int main (int argc, char** argv) {
     		pcl::transformPointCloud (*ground_cloud, *ground_cloud, offset_transform);
     		pcl::transformPointCloud (*obs_cloud, *obs_cloud, offset_transform);
             pcl::transformPointCloud (*planes_cloud, *planes_cloud, offset_transform);
+            pcl::transformPointCloud (*planes[closest_plane_index], *planes[closest_plane_index], offset_transform);
 	  		//TRACKS PROCESSING-----------*CURRENTLY UNDER DEVELOPMENT*-------------------------------------------------------------------------------
 	  		pcl::PointCloud<pcl::PointXYZRGB>::Ptr ltrack_obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //obstacle points inside the left track
   			pcl::PointCloud<pcl::PointXYZRGB>::Ptr rtrack_obs_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //obstacle points inside the right track
@@ -672,17 +753,17 @@ int main (int argc, char** argv) {
   			float dist;
   			uint8_t r,g,b;
   			uint32_t rgb;
-	  		for(int i=0;i<ground_cloud->points.size();i++){
-	    		condition_1 = ground_cloud->points[i].x>-bound_1 && ground_cloud->points[i].x<-bound_2;
-	    		condition_2 = ground_cloud->points[i].x<bound_1 && ground_cloud->points[i].x>bound_2;
-	    		condition_3 = ground_cloud->points[i].y < high_obs_bound_y;
+	  		for(int i=0;i<planes[closest_plane_index]->points.size();i++){
+	    		condition_1 = planes[closest_plane_index]->points[i].x>-bound_1 && planes[closest_plane_index]->points[i].x<-bound_2;
+	    		condition_2 = planes[closest_plane_index]->points[i].x<bound_1 && planes[closest_plane_index]->points[i].x>bound_2;
+	    		condition_3 = planes[closest_plane_index]->points[i].y < high_obs_bound_y;
 	    		min_score=1.0f;
 	    		score=1.0f;
 	    		if(condition_3){
 	    			if(condition_1) { //left track
 	    				for(int j=0;j<ltrack_obs_cloud->points.size();j++){
 	    					if(ltrack_obs_cloud->points[j].y<high_obs_bound_y){//second condition added 18/01/2024
-		    					dist=sqrt(pow(ground_cloud->points[i].x-ltrack_obs_cloud->points[j].x,2)+pow(ground_cloud->points[i].y-ltrack_obs_cloud->points[j].y,2));
+		    					dist=sqrt(pow(planes[closest_plane_index]->points[i].x-ltrack_obs_cloud->points[j].x,2)+pow(planes[closest_plane_index]->points[i].y-ltrack_obs_cloud->points[j].y,2));
 		   						//min_obs_dist = ltrack_obs_cloud->points[j].z * (1+add_dist);
 		   						min_obs_dist = ltrack_obs_cloud->points[j].z + add_dist;
 		   						max_obs_dist = min_obs_dist + 0.05;
@@ -693,16 +774,16 @@ int main (int argc, char** argv) {
 	  						if(score<min_score) min_score = score;
   							}
 	    				}
-	    				exponential_component = exp(-(pow((ground_cloud->points[i].y-mean) / stddev,2.0)));
+	    				exponential_component = exp(-(pow((planes[closest_plane_index]->points[i].y-mean) / stddev,2.0)));
 	    				b = (uint8_t)255*min_score* exponential_component;
 	    				rgb = (uint32_t)b;
-	    				ground_cloud->points[i].rgb = *reinterpret_cast<float*>(&rgb);
-	    				tracks[0].push_back(ground_cloud->points[i]);	
+                        planes[closest_plane_index]->points[i].rgb = *reinterpret_cast<float*>(&rgb);
+	    				tracks[0].push_back(planes[closest_plane_index]->points[i]);
 	    			}
 	    			if(condition_2) { //right track
 	    				for(int j=0;j<rtrack_obs_cloud->points.size();j++){
 	    					if(rtrack_obs_cloud->points[j].y<high_obs_bound_y){ //second condition added 18/01/2024
-		    					dist=sqrt(pow(ground_cloud->points[i].x-rtrack_obs_cloud->points[j].x,2)+pow(ground_cloud->points[i].y-rtrack_obs_cloud->points[j].y,2));
+		    					dist=sqrt(pow(planes[closest_plane_index]->points[i].x-rtrack_obs_cloud->points[j].x,2)+pow(planes[closest_plane_index]->points[i].y-rtrack_obs_cloud->points[j].y,2));
 		    					//min_obs_dist = rtrack_obs_cloud->points[j].z* (1+add_dist);
 		    					min_obs_dist = rtrack_obs_cloud->points[j].z + add_dist;
 		    					max_obs_dist = min_obs_dist + 0.05;
@@ -713,20 +794,20 @@ int main (int argc, char** argv) {
 		  					if(score<min_score) min_score = score;
 	  						}
 	   					}	 
-	   					exponential_component = exp(-(pow((ground_cloud->points[i].y-mean) / stddev,2.0)));
+	   					exponential_component = exp(-(pow((planes[closest_plane_index]->points[i].y-mean) / stddev,2.0)));
 	   					r = (uint8_t)255*min_score* exponential_component;
 	   					rgb = (uint32_t)r<<16;
-	   					ground_cloud->points[i].rgb = *reinterpret_cast<float*>(&rgb);
-	   					tracks[1].push_back(ground_cloud->points[i]);
+                        planes[closest_plane_index]->points[i].rgb = *reinterpret_cast<float*>(&rgb);
+	   					tracks[1].push_back(planes[closest_plane_index]->points[i]);
 	   				}
 	   				if(!(condition_1 || condition_2)) { //point not on tracks
 	   					rgb = (uint32_t)0;
-	   					ground_cloud->points[i].rgb = *reinterpret_cast<float*>(&rgb);
+                        planes[closest_plane_index]->points[i].rgb = *reinterpret_cast<float*>(&rgb);
 	   				}
 	   			}
 	   			else {
 	   				rgb = (uint32_t)0;
-	   				ground_cloud->points[i].rgb = *reinterpret_cast<float*>(&rgb);
+                    planes[closest_plane_index]->points[i].rgb = *reinterpret_cast<float*>(&rgb);
 	    		}
 	  		}
 	  		
@@ -825,11 +906,11 @@ int main (int argc, char** argv) {
   			for(int i=0; i<2;i++) {
 	  			for(int k=0; k<best_window[i].size();k++){
 	  				int colored_points=0;
-	  	 			for(int j=0; j< ground_cloud->points.size();j++){
-		  				if(best_window[i][k].x ==ground_cloud->points[j].x &&  best_window[i][k].y ==ground_cloud->points[j].y && best_window[i][k].z ==ground_cloud->points[j].z){
+	  	 			for(int j=0; j< planes[closest_plane_index]->points.size();j++){
+		  				if(best_window[i][k].x ==planes[closest_plane_index]->points[j].x &&  best_window[i][k].y ==planes[closest_plane_index]->points[j].y && best_window[i][k].z ==planes[closest_plane_index]->points[j].z){
 		  					uint8_t r = 255, g = 255, b = 0;
 		    					uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
-		    					ground_cloud->points[j].rgb = *reinterpret_cast<float*>(&rgb);
+                                planes[closest_plane_index]->points[j].rgb = *reinterpret_cast<float*>(&rgb);
 		    					colored_points++;
 		    					if(colored_points==best_window[i].size()) break;
 		  				}
@@ -845,11 +926,14 @@ int main (int argc, char** argv) {
 	  		pcl::toPCLPointCloud2(*obs_cloud, outcloud2); //obstacles only 
 	  		pub2.publish (outcloud2);
 	  		pcl::PCLPointCloud2 outcloud3;
-	  		pcl::toPCLPointCloud2(*ground_cloud, outcloud3); //ground only
+	  		pcl::toPCLPointCloud2(*planes[closest_plane_index], outcloud3); //ground only
 	  		pub3.publish (outcloud3);
             pcl::PCLPointCloud2 outcloud4;
             pcl::toPCLPointCloud2(*planes_cloud, outcloud4); //planes only
             pub_planes.publish(outcloud4);
+            pcl::PCLPointCloud2 outcloud5;
+            pcl::toPCLPointCloud2(*ground_cloud, outcloud5); //ground only
+            pub_ground.publish(outcloud5);
 	  		
 	  		//publish obstacle shape of swing leg in sagittal plane
 	  		std::vector<float> o_p;

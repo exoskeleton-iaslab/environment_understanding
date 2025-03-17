@@ -144,4 +144,5 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
                          bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang);
 
 void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud);
-void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud, int ground_plan_index);
+void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud);
+void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float y);
