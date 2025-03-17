@@ -481,7 +481,7 @@ int main (int argc, char** argv) {
             obs_cloud->width = obs_cloud->size();
 
             int closest_plane_index = -1;
-            float high_step = 0.0, current_angle = 0.0;
+            float high_step = 0.0, current_angle = -1.0;
             float min_distance = 1000000;
             for (int idx = 0; idx < planes.size(); idx++) {
                 if (idx == ground_plan_index) {
@@ -529,7 +529,7 @@ int main (int argc, char** argv) {
             std::cout << "************************************************************ High step is " << high_step << std::endl;
             std::cout << "************************************************************ Angle is " << current_angle << std::endl;
 
-            if (std::abs(std::abs(mean_ground_z) - camera_height) > 0.05 && std::abs(current_angle) > 0.1) {
+            if (std::abs(std::abs(mean_ground_z) - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
                 std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
                 pcl::PointCloud<pcl::PointXYZRGB>::Ptr build_ground(new pcl::PointCloud<pcl::PointXYZRGB>);
                 float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
