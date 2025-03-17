@@ -329,17 +329,19 @@ void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
 }
 
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud) {
-    int jj = 0, zz=0, rr=255;
+    int jj=0, zz=0, rr=255;
+    std::sort(planes.begin(), planes.end(), [](const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& a, const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& b) {
+        return a->points.size() > b->points.size();
+    });
     for (int idx = 0; idx < planes.size(); idx++) {
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
-        std::cout << "Plane " << idx << " has " << plane->points.size() << " points." << std::endl;
-        uint8_t r = rr % 256, g = jj%256, b = zz%256;
+        std::cout << "Plane " << idx << " has " << planes[idx]->points.size() << " points." << std::endl;
+        uint8_t r = rr % 256, g = jj % 256, b = zz % 256;
         uint32_t rgb = (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
         jj += 130;
         zz += 75;
         rr -= 50;
 
-        for (auto& point : plane->points) {
+        for (auto& point : planes[idx]->points) {
             point.rgb = *reinterpret_cast<float*>(&rgb);
             planes_cloud->points.push_back(point);
         }
@@ -516,9 +518,9 @@ int main (int argc, char** argv) {
             if (closest_plane_index == -1) {
                 std::cout << "No suitable plane found." << std::endl;
                 closest_plane_index = 0;
-                planes[0]->points.clear();
-                for (auto& point : ground_cloud->points) {
-                    planes[0]->points.push_back(point);
+                planes[ground_plan_index]->points.clear();
+                for (auto point : ground_cloud->points) {
+                    planes[ground_plan_index]->points.push_back(point);
                 }
             }
             planes[closest_plane_index]->header = ground_cloud->header;
