@@ -370,6 +370,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub8 = nh.advertise<std_msgs::Float32> ("reference_tilt", 1);
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
+    ros::Publisher stairs_foothold_height = nh.advertise<std_msgs::Float32>("stairs/foothold_height", 1);
 	float dist_bt_feet;
 	std::string temp;
 	ros::param::get("~dist_origin_foot", dist_bt_feet);
@@ -403,7 +404,7 @@ int main (int argc, char** argv) {
 	//float min_height_constraint = 0.9; //max CoM height allowed: 0.9 * leg length (SHOULD BE A PARAM??)
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
 	//max_step_length = max_sl_const;
-
+    float final_step_height = -1.0;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
     while(ros::ok()){
@@ -532,19 +533,26 @@ int main (int argc, char** argv) {
             std::cout << "************************************************************ High step is " << high_step << std::endl;
             std::cout << "************************************************************ Angle is " << current_angle << std::endl;
 
-            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
-                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
-                float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
-                float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
-                transpose_z(obs_cloud, dist_z, 0.0);
-                transpose_z(input_cloud, dist_z, 0.0);
-                transpose_z(input_cloud_original, dist_z, 0.0);
-                for(auto& plane : planes) {
-                    transpose_z(plane, dist_z, 0.0);
-                }
-                transpose_z(ground_cloud, 0.0, dist_y);
-                // planes.push_back(ground_cloud);
+            if (final_step_height < 0.0 && high_step > 0.0) {
+                final_step_height = high_step;
+                std_msgs::Float32 msg_step_height;
+                msg_step_height.data= final_step_height;
+                stairs_foothold_height.publish(msg_step_height);
             }
+
+//            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
+//                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
+//                float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
+//                float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
+//                transpose_z(obs_cloud, dist_z, 0.0);
+//                transpose_z(input_cloud, dist_z, 0.0);
+//                transpose_z(input_cloud_original, dist_z, 0.0);
+//                for(auto& plane : planes) {
+//                    transpose_z(plane, dist_z, 0.0);
+//                }
+//                transpose_z(ground_cloud, 0.0, dist_y);
+//                // planes.push_back(ground_cloud);
+//            }
 
             camera_offs_z = 0.0, ground_points = 0;
             for (auto& point : ground_cloud->points) {
