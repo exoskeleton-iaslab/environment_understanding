@@ -13,6 +13,7 @@
 	<arg name="ransac_max_it" default='1000'/>
 	<arg name="ransac_th" default='0.025'/>
 	<arg name="x_alignment" default='true'/>
+	<arg name="camera_height" default='0.90'/>
 
 	<node name="robotic_vision_v2" pkg="plane_detector" type="robotic_vision_v2" output="screen" required="true">
 		<param name="front_foot_length" type="double" value="$(arg front_foot_length)"/>
@@ -27,6 +28,7 @@
 		<param name="ransac_max_it" type="int" value="$(arg ransac_max_it)"/>
 		<param name="ransac_th" type="double" value="$(arg ransac_th)"/>
 		<param name="x_alignment" type="bool" value="$(arg x_alignment)"/>
+		<param name="camera_height" type="double" value="$(arg camera_height)"/>
 	</node>
 
 </launch>

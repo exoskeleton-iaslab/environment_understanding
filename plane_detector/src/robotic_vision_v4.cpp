@@ -397,13 +397,15 @@ int main (int argc, char** argv) {
 	ros::param::get("~ransac_th", ransac_th);
 	bool x_alignment;
 	ros::param::get("~x_alignment", x_alignment);
+    float camera_height;
+    ros::param::get("~camera_height", camera_height);
+
 	//float min_height_constraint = 0.9; //max CoM height allowed: 0.9 * leg length (SHOULD BE A PARAM??)
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
 	//max_step_length = max_sl_const;
 
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
-    float camera_height = 0.90;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -530,7 +532,7 @@ int main (int argc, char** argv) {
             std::cout << "************************************************************ High step is " << high_step << std::endl;
             std::cout << "************************************************************ Angle is " << current_angle << std::endl;
 
-            if (std::abs(std::abs(mean_ground_z) - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
+            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
                 std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
                 float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
                 float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
