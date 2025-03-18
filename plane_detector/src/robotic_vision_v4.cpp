@@ -472,11 +472,11 @@ int main (int argc, char** argv) {
             align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
             float mean_ground_z = 0.0, mean_ground_y = 0.0;
             for (auto& point : planes[ground_plan_index]->points) {
-                 camera_offs_z += point.z;
+                 mean_ground_z += point.z;
                  ground_points++;
                  mean_ground_y += point.y;
             }
-            mean_ground_z = camera_offs_z / ground_points;
+            mean_ground_z /= ground_points;
             mean_ground_y /= ground_points;
 
             ground_cloud->width = ground_cloud->points.size();
@@ -527,29 +527,27 @@ int main (int argc, char** argv) {
             planes[closest_plane_index]->height = 1;
             planes[closest_plane_index]->width = planes[closest_plane_index]->points.size();
 
-            std::cout << "***Closest plane to ground is " << closest_plane_index << std::endl;
             std::cout << "************************************************************ High step is " << high_step << std::endl;
             std::cout << "************************************************************ Angle is " << current_angle << std::endl;
 
             if (std::abs(std::abs(mean_ground_z) - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
                 std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
-                pcl::PointCloud<pcl::PointXYZRGB>::Ptr build_ground(new pcl::PointCloud<pcl::PointXYZRGB>);
                 float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
                 float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
-                for (auto point : ground_cloud->points) {
-                    int sign = (point.z > 0) ? 1 : (point.z < 0) ? -1 : 0;
-                    point.z += dist_z * sign;
-                    build_ground->points.push_back(point);
-                }
                 transpose_z(obs_cloud, dist_z, 0.0);
                 transpose_z(input_cloud, dist_z, 0.0);
                 transpose_z(input_cloud_original, dist_z, 0.0);
                 for(auto& plane : planes) {
                     transpose_z(plane, dist_z, 0.0);
                 }
-                transpose_z(build_ground, dist_z, dist_y);
-                planes.push_back(build_ground);
-                *ground_cloud = *build_ground;
+                transpose_z(ground_cloud, 0.0, dist_y);
+                // planes.push_back(ground_cloud);
+            }
+
+            camera_offs_z = 0.0, ground_points = 0;
+            for (auto& point : ground_cloud->points) {
+                camera_offs_z += point.z;
+                ground_points++;
             }
 
             pcl::PointCloud<pcl::PointXYZRGB>::Ptr planes_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
