@@ -473,40 +473,31 @@ int main (int argc, char** argv) {
             group_obstacles(obs_cloud);
 
             align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
-            float mean_ground_z = 0.0, mean_ground_y = 0.0;
+            float mean_ground_z = 0.0;
             for (auto& point : planes[ground_plan_index]->points) {
                  mean_ground_z += point.z;
                  ground_points++;
-                 mean_ground_y += point.y;
             }
             mean_ground_z /= ground_points;
-            mean_ground_y /= ground_points;
 
             ground_cloud->width = ground_cloud->points.size();
             obs_cloud->width = obs_cloud->size();
 
             int closest_plane_index = -1;
-            float high_step = 0.0, current_angle = -1.0;
+            float high_step = 0.0, current_angle = 0.0;
             float min_distance = 1000000;
             for (int idx = 0; idx < planes.size(); idx++) {
                 if (idx == ground_plan_index) {
                     continue;
                 }
-                float distance, current_high = 0.0;
+                float current_high = 0.0;
                 for (auto& point : planes[idx]->points) {
-                    distance += std::abs(ground_cloud->points[0].x * point.x + ground_cloud->points[0].y * point.y + ground_cloud->points[0].z * point.z + ground_cloud->points[0].z);
                     current_high += std::abs(point.z - mean_ground_z);
                 }
                 current_high /= planes[idx]->points.size();
-                distance /= planes[idx]->points.size();
-                std::cout << "$$$ Distance to plane " << idx << " is " << distance << std::endl;
-                std::cout << "$$$ Min distance is " << min_distance << std::endl;
-                std::cout << "$$$ High step is " << current_high << std::endl;
-                std::cout << "$$$ Feats length is " << feet_length << std::endl;
-                std::cout << "$$$ Mean Ground Y is " << mean_ground_y << std::endl;
-                std::cout << "$$$ Current angle is " << current_angle << std::endl;
-                if (distance < min_distance && feet_length > mean_ground_y) {
-                    min_distance = distance;
+                float min_y_distance = std::abs(ground_cloud->points[0].y - planes[idx]->points[0].y);
+                if (min_y_distance < min_distance && feet_length > min_y_distance) {
+                    min_distance = min_y_distance;
                     closest_plane_index = idx;
                     high_step = current_high;
                     Eigen::Matrix3f covariance_matrix_plane;
@@ -516,6 +507,7 @@ int main (int argc, char** argv) {
                     Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver_plane(covariance_matrix_plane);
                     Eigen::Vector3f normal_plane = solver_plane.eigenvectors().col(0);
                     current_angle = std::acos(normal_plane.dot(Eigen::Vector3f(0.0f, 0.0f, 1.0f)));
+                    current_angle = current_angle * 180 / M_PI;
                 }
             }
             if (closest_plane_index == -1) {
