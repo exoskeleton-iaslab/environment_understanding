@@ -371,6 +371,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
     ros::Publisher stairs_foothold_height = nh.advertise<std_msgs::Float32>("stairs/foothold_height", 1);
+    ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stairs/stair_edge", 1);
 	float dist_bt_feet;
 	std::string temp;
 	ros::param::get("~dist_origin_foot", dist_bt_feet);
@@ -530,6 +531,10 @@ int main (int argc, char** argv) {
                 std_msgs::Float32 msg_step_height;
                 msg_step_height.data= final_step_height;
                 stairs_foothold_height.publish(msg_step_height);
+
+                std_msgs::Float32 msg_stair_edge;
+                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
+                stair_edge.publish(msg_stair_edge);
             }
 
 //            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
