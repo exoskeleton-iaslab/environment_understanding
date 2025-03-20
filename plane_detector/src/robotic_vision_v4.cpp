@@ -406,6 +406,8 @@ int main (int argc, char** argv) {
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
 	//max_step_length = max_sl_const;
     float final_step_height = -1.0;
+    std_msgs::Float32 msg_stair_edge;
+    msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
     while(ros::ok()){
@@ -531,9 +533,10 @@ int main (int argc, char** argv) {
                 std_msgs::Float32 msg_step_height;
                 msg_step_height.data= final_step_height;
                 stairs_foothold_height.publish(msg_step_height);
-
-                std_msgs::Float32 msg_stair_edge;
                 msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
+            }
+
+            if (msg_stair_edge.data > 0.0){
                 stair_edge.publish(msg_stair_edge);
             }
 
