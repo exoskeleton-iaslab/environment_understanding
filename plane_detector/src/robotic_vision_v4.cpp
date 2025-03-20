@@ -371,6 +371,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
     ros::Publisher stairs_foothold_height = nh.advertise<std_msgs::Float32>("stairs/foothold_height", 1);
+    ros::Publisher slope_foothold_height = nh.advertise<std_msgs::Float32>("slope/foothold_height", 1);
     ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stairs/stair_edge", 1);
 	float dist_bt_feet;
 	std::string temp;
@@ -1016,10 +1017,10 @@ int main (int argc, char** argv) {
   			msg.data= foot_tip_pos;
   			pub10.publish(msg);
 
-           if(std::abs(current_angle) > 10.0){
+           if(std::abs(current_angle) > 15.0){
                std_msgs::Float32 msg_step_slope_height;
                msg_step_slope_height.data= slope_height + rf_l;
-               stairs_foothold_height.publish(msg_step_slope_height);
+               slope_foothold_height.publish(msg_step_slope_height);
            }
   			
 	  		//EXECUTION TIME OF MAIN FUNCTION----------------------------------------------------------
