@@ -406,6 +406,7 @@ int main (int argc, char** argv) {
 	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
 	//max_step_length = max_sl_const;
     float final_step_height = -1.0;
+    float slope_height = 1000000.0;
     std_msgs::Float32 msg_stair_edge;
     msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
@@ -918,11 +919,14 @@ int main (int argc, char** argv) {
 	  				int colored_points=0;
 	  	 			for(int j=0; j< planes[closest_plane_index]->points.size();j++){
 		  				if(best_window[i][k].x ==planes[closest_plane_index]->points[j].x &&  best_window[i][k].y ==planes[closest_plane_index]->points[j].y && best_window[i][k].z ==planes[closest_plane_index]->points[j].z){
-		  					uint8_t r = 255, g = 255, b = 0;
-		    					uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
-                                planes[closest_plane_index]->points[j].rgb = *reinterpret_cast<float*>(&rgb);
-		    					colored_points++;
-		    					if(colored_points==best_window[i].size()) break;
+		  					  if(planes[closest_plane_index]->points[j].z < slope_height && planes[closest_plane_index]->points[j].z > 0.0){
+                                  slope_height = planes[closest_plane_index]->points[j].z;
+                              }
+                              uint8_t r = 255, g = 255, b = 0;
+                              uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
+                              planes[closest_plane_index]->points[j].rgb = *reinterpret_cast<float*>(&rgb);
+                              colored_points++;
+                              if(colored_points==best_window[i].size()) break;
 		  				}
 	  				}
 	  			}
@@ -1011,6 +1015,12 @@ int main (int argc, char** argv) {
   			pub9.publish(msg);
   			msg.data= foot_tip_pos;
   			pub10.publish(msg);
+
+           if(std::abs(current_angle) > 10.0){
+               std_msgs::Float32 msg_step_slope_height;
+               msg_step_slope_height.data= slope_height + rf_l;
+               stairs_foothold_height.publish(msg_step_slope_height);
+           }
   			
 	  		//EXECUTION TIME OF MAIN FUNCTION----------------------------------------------------------
 	  		auto stop= high_resolution_clock::now();
