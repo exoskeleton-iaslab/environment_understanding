@@ -370,8 +370,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub8 = nh.advertise<std_msgs::Float32> ("reference_tilt", 1);
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
-    ros::Publisher stairs_foothold_height = nh.advertise<std_msgs::Float32>("stairs/foothold_height", 1);
-    ros::Publisher slope_foothold_height = nh.advertise<std_msgs::Float32>("slope/foothold_height", 1);
+    ros::Publisher foothold_height = nh.advertise<std_msgs::Float32>("foothold_height", 1);
     ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stairs/stair_edge", 1);
 	float dist_bt_feet;
 	std::string temp;
@@ -529,18 +528,6 @@ int main (int argc, char** argv) {
 
             std::cout << "************************************************************ High step is " << high_step << std::endl;
             std::cout << "************************************************************ Angle is " << current_angle << std::endl;
-
-            if (final_step_height < 0.0 && high_step > 0.0) {
-                final_step_height = high_step;
-                std_msgs::Float32 msg_step_height;
-                msg_step_height.data= final_step_height;
-                stairs_foothold_height.publish(msg_step_height);
-                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
-            }
-
-            if (msg_stair_edge.data > 0.0){
-                stair_edge.publish(msg_stair_edge);
-            }
 
 //            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
 //                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
@@ -1017,11 +1004,22 @@ int main (int argc, char** argv) {
   			msg.data= foot_tip_pos;
   			pub10.publish(msg);
 
-           if(std::abs(current_angle) > 15.0){
-               std_msgs::Float32 msg_step_slope_height;
-               msg_step_slope_height.data= slope_height + rf_l;
-               slope_foothold_height.publish(msg_step_slope_height);
+           if (final_step_height < 0.0 && high_step > 0.0) {
+               if(std::abs(current_angle) > 15.0){
+                   final_step_height = slope_height + rf_l;
+               }
+               else{
+                   final_step_height = high_step;
+               }
+               std_msgs::Float32 msg_step_height;
+               msg_step_height.data= final_step_height;
+               foothold_height.publish(msg_step_height);
+               msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
            }
+
+            if (msg_stair_edge.data > 0.0){
+                stair_edge.publish(msg_stair_edge);
+            }
   			
 	  		//EXECUTION TIME OF MAIN FUNCTION----------------------------------------------------------
 	  		auto stop= high_resolution_clock::now();
