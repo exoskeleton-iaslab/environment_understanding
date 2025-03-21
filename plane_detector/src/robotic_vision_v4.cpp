@@ -407,7 +407,7 @@ int main (int argc, char** argv) {
 	//max_step_length = max_sl_const;
     float final_step_height = -1.0;
     float slope_height = 1000000.0;
-    std_msgs::Float32 msg_stair_edge;
+    std_msgs::Float32 msg_stair_edge, msg_step_height;
     msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
@@ -1011,12 +1011,13 @@ int main (int argc, char** argv) {
                else{
                    final_step_height = high_step;
                }
-               std_msgs::Float32 msg_step_height;
                msg_step_height.data= final_step_height;
-               foothold_height.publish(msg_step_height);
                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
            }
 
+            if (final_step_height > 0.0) {
+                foothold_height.publish(msg_step_height);
+            }
             if (msg_stair_edge.data > 0.0){
                 stair_edge.publish(msg_stair_edge);
             }
