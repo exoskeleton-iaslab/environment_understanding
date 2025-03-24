@@ -228,24 +228,25 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
 }
 
 int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
-    float max_distance = 0;
-    int max_idx = 0;
+    float min_abs_distance = 100000000;
+    int min_idx = 0;
     for (int idx = 0; idx < planes.size(); idx++) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
-        float distance = 0;
+        float min_distance = 100000000;
         for (const auto& point : plane->points) {
-            distance += point.y;
+            if (point.y < min_distance) {
+                min_distance = point.y;
+            }
         }
-        distance /= plane->points.size();
-        if (distance > max_distance) {
-            max_distance = distance;
-            max_idx = idx;
+        if (min_distance < min_abs_distance) {
+            min_abs_distance = min_distance;
+            min_idx = idx;
         }
     }
-    for (auto& point : planes[max_idx]->points) {
+    for (auto& point : planes[min_idx]->points) {
         ground_cloud->points.push_back(point);
     }
-    return max_idx;
+    return min_idx;
 }
 
 void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
@@ -490,6 +491,20 @@ int main (int argc, char** argv) {
             int closest_plane_index = -1;
             float high_step = 0.0, current_angle = 0.0;
             float min_distance = 1000000;
+
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_y(new pcl::PointCloud<pcl::PointXYZRGB>);
+            *ground_y = *ground_cloud;
+            ground_y->header = ground_cloud->header;
+            ground_y->height = 1;
+            applyPCAandRemoveXZ(ground_y);
+            ground_y->width = ground_y->size();
+            float min_ground_y = 100000;
+            for (auto& point : ground_y->points) {
+                if (point.y < min_ground_y) {
+                    min_ground_y = point.y;
+                }
+            }
+
             for (int idx = 0; idx < planes.size(); idx++) {
                 if (idx == ground_plan_index) {
                     continue;
@@ -499,8 +514,24 @@ int main (int argc, char** argv) {
                     current_high += std::abs(point.z - mean_ground_z);
                 }
                 current_high /= planes[idx]->points.size();
-                float min_y_distance = std::abs(ground_cloud->points[0].y - planes[idx]->points[0].y);
-                if (min_y_distance < min_distance && feet_length > min_y_distance) {
+
+                pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane_y(new pcl::PointCloud<pcl::PointXYZRGB>);
+                *plane_y = *planes[idx];
+                plane_y->header = planes[idx]->header;
+                plane_y->height = 1;
+                applyPCAandRemoveXZ(plane_y);
+                plane_y->width = plane_y->size();
+                float min_plane_y = 100000;
+                for (auto& point : plane_y->points) {
+                    if (point.y < min_plane_y) {
+                        min_plane_y = point.y;
+                    }
+                }
+
+
+                float min_y_distance = std::abs(min_plane_y - min_ground_y);
+                std::cout << "************************************************************ Min y distance is " << min_y_distance << std::endl;
+                if (min_y_distance < min_distance && feet_length> min_y_distance) {
                     min_distance = min_y_distance;
                     closest_plane_index = idx;
                     high_step = current_high;

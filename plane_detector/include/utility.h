@@ -27,6 +27,7 @@
 #include <pcl_ros/point_cloud.h>
 #include <std_msgs/Int8.h>
 #include <pcl/features/normal_3d.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 struct cmp_xyz {
 	inline bool operator() (const pcl::PointXYZ& pt1, const pcl::PointXYZ& pt2){
@@ -146,3 +147,56 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
 void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud);
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud);
 void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float y);
+
+void applyPCAandRemoveXZ(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& cloud)
+{
+    if (cloud->empty()) {
+        std::cerr << "Cloud is empty!" << std::endl;
+        return;
+    }
+
+    // Converti la nuvola in una matrice Eigen
+    Eigen::MatrixXf data(cloud->size(), 3);
+    for (size_t i = 0; i < cloud->size(); ++i) {
+        data(i, 0) = cloud->points[i].x;
+        data(i, 1) = cloud->points[i].y;
+        data(i, 2) = cloud->points[i].z;
+    }
+
+    // Calcola la media e centra i dati
+    Eigen::Vector3f mean = data.colwise().mean();
+    data.rowwise() -= mean.transpose();
+
+    // Calcola la matrice di covarianza
+    Eigen::Matrix3f covariance = (data.transpose() * data) / float(cloud->size() - 1);
+
+    // Calcola autovalori e autovettori
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(covariance);
+    Eigen::Matrix3f eigenvectors = solver.eigenvectors(); // Colonne = autovettori
+
+    // Proietta i dati nello spazio PCA
+    Eigen::MatrixXf transformed = data * eigenvectors;
+
+    // Rimuovi le componenti lungo i primi due assi principali (X e Z in PCA)
+    transformed.col(0).setZero();  // Rimuove la componente X
+    transformed.col(2).setZero();  // Rimuove la componente Z
+
+    // Riporta i dati nello spazio originale
+    Eigen::MatrixXf restored = transformed * eigenvectors.transpose();
+    restored.rowwise() += mean.transpose();
+
+    // Aggiorna la nuvola
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+    for (size_t i = 0; i < cloud->size(); ++i) {
+        pcl::PointXYZRGB point;
+        point.x = restored(i, 0);
+        point.y = restored(i, 1);
+        point.z = restored(i, 2);
+        point.r = cloud->points[i].r;
+        point.g = cloud->points[i].g;
+        point.b = cloud->points[i].b;
+        cloud_filtered->push_back(point);
+    }
+
+    *cloud = *cloud_filtered;
+}
