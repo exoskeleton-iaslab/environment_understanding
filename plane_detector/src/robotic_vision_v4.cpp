@@ -227,26 +227,110 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
     std::cout << "Totally found " << planes.size() << " planes." << std::endl;
 }
 
-int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
-    float min_abs_distance = 100000000;
-    int min_idx = 0;
-    for (int idx = 0; idx < planes.size(); idx++) {
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane = planes[idx];
-        float min_distance = 100000000;
-        for (const auto& point : plane->points) {
-            if (point.y < min_distance) {
-                min_distance = point.y;
-            }
-        }
-        if (min_distance < min_abs_distance) {
-            min_abs_distance = min_distance;
-            min_idx = idx;
+float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud) {
+    float min_distance = std::numeric_limits<float>::max();
+    for (const auto point : cloud->points) {
+        float distance = std::sqrt(std::pow(point.x, 2) + std::pow(point.y, 2));
+        if (distance < min_distance) {
+            min_distance = distance;
         }
     }
-    for (auto& point : planes[min_idx]->points) {
+    return min_distance;
+}
+
+int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
+    float min_distance = std::numeric_limits<float>::max();;
+    int min_index = 0;
+    Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
+    Eigen::Vector3f normal = compute_normal_pca(planes[0]);
+    for (int idx = 0; idx < planes.size(); idx++) {
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane(new pcl::PointCloud<pcl::PointXYZRGB>);
+        *plane = *planes[idx];
+        float tilt = rotate_point_cloud_plane(plane, n_z, normal.normalized());
+        float distance = find_minimal_euclidian_distance(plane);
+        if (distance < min_distance) {
+            min_distance = distance;
+            min_index = idx;
+        }
+    }
+    for (auto& point : planes[min_index]->points) {
         ground_cloud->points.push_back(point);
     }
-    return min_idx;
+    return min_index;
+}
+
+Eigen::Vector3f compute_normal_pca(pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane) {
+    Eigen::Matrix3f covariance_matrix;
+    Eigen::Vector4f centroid;
+    pcl::compute3DCentroid(*plane, centroid);
+    pcl::computeCovarianceMatrixNormalized(*plane, centroid, covariance_matrix);
+    Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver(covariance_matrix);
+    return solver.eigenvectors().col(0);
+}
+
+void set_foothold_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                        pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
+                        int ground_plan_index, float feet_length, float camera_height, float mean_ground_z,
+                        int& closest_plane_index, float& high_step, float& current_angle) {
+    closest_plane_index = -1;
+    high_step = 0.0;
+    current_angle = 0.0;
+    float min_distance = std::numeric_limits<float>::max();
+    float min_ground_y = find_minimal_euclidian_distance(ground_cloud);
+    for (int idx = 0; idx < planes.size(); idx++) {
+        if (idx == ground_plan_index) {
+            continue;
+        }
+        float current_high = 0.0;
+        for (auto& point : planes[idx]->points) {
+            current_high += std::abs(point.z - mean_ground_z);
+        }
+        current_high /= planes[idx]->points.size();
+
+        float min_plane_y = find_minimal_euclidian_distance(planes[idx]);
+        float min_y_distance = std::abs(min_plane_y - min_ground_y);
+        std::cout << "Min y distance is " << min_y_distance << std::endl;
+        if (min_y_distance < min_distance && feet_length > min_y_distance) {
+            min_distance = min_y_distance;
+            closest_plane_index = idx;
+            high_step = current_high;
+            Eigen::Vector3f normal_plane = compute_normal_pca(planes[idx]);
+            current_angle = std::acos(normal_plane.dot(Eigen::Vector3f(0.0f, 0.0f, 1.0f)));
+            current_angle = current_angle * 180 / M_PI;
+            if (current_angle > 90.0) {
+                current_angle = 180.0 - current_angle;
+            }
+        }
+    }
+    if (closest_plane_index == -1) {
+        std::cout << "No suitable plane found." << std::endl;
+        closest_plane_index = 0;
+        planes[ground_plan_index]->points.clear();
+        for (auto point : ground_cloud->points) {
+            planes[ground_plan_index]->points.push_back(point);
+        }
+    }
+    planes[closest_plane_index]->header = ground_cloud->header;
+    planes[closest_plane_index]->height = 1;
+    planes[closest_plane_index]->width = planes[closest_plane_index]->points.size();
+
+    std::cout << "High step is " << high_step << std::endl;
+    std::cout << "Angle is " << current_angle << std::endl;
+
+//            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
+//                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
+//                float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
+//                float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
+//                transpose_z(obs_cloud, dist_z, 0.0);
+//                transpose_z(input_cloud, dist_z, 0.0);
+//                transpose_z(input_cloud_original, dist_z, 0.0);
+//                for(auto& plane : planes) {
+//                    transpose_z(plane, dist_z, 0.0);
+//                }
+//                transpose_z(ground_cloud, 0.0, dist_y);
+//                // planes.push_back(ground_cloud);
+//            }
+
 }
 
 void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
@@ -257,12 +341,7 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
                          bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang) {
     if(!alignment_z) {
         Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
-        Eigen::Matrix3f covariance_matrix;
-        Eigen::Vector4f centroid;
-        pcl::compute3DCentroid(*ground_cloud, centroid);
-        pcl::computeCovarianceMatrixNormalized(*ground_cloud, centroid, covariance_matrix);
-        Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver(covariance_matrix);
-        Eigen::Vector3f normal = solver.eigenvectors().col(0);
+        Eigen::Vector3f normal = compute_normal_pca(ground_cloud);
         float tilt;
         for (auto plane: planes) {
             tilt = rotate_point_cloud_plane(plane, n_z, normal.normalized());
@@ -490,89 +569,7 @@ int main (int argc, char** argv) {
 
             int closest_plane_index = -1;
             float high_step = 0.0, current_angle = 0.0;
-            float min_distance = 1000000;
-
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_y(new pcl::PointCloud<pcl::PointXYZRGB>);
-            *ground_y = *ground_cloud;
-            ground_y->header = ground_cloud->header;
-            ground_y->height = 1;
-            applyPCAandRemoveXZ(ground_y);
-            ground_y->width = ground_y->size();
-            float min_ground_y = 100000;
-            for (auto& point : ground_y->points) {
-                if (point.y < min_ground_y) {
-                    min_ground_y = point.y;
-                }
-            }
-
-            for (int idx = 0; idx < planes.size(); idx++) {
-                if (idx == ground_plan_index) {
-                    continue;
-                }
-                float current_high = 0.0;
-                for (auto& point : planes[idx]->points) {
-                    current_high += std::abs(point.z - mean_ground_z);
-                }
-                current_high /= planes[idx]->points.size();
-
-                pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane_y(new pcl::PointCloud<pcl::PointXYZRGB>);
-                *plane_y = *planes[idx];
-                plane_y->header = planes[idx]->header;
-                plane_y->height = 1;
-                applyPCAandRemoveXZ(plane_y);
-                plane_y->width = plane_y->size();
-                float min_plane_y = 100000;
-                for (auto& point : plane_y->points) {
-                    if (point.y < min_plane_y) {
-                        min_plane_y = point.y;
-                    }
-                }
-
-
-                float min_y_distance = std::abs(min_plane_y - min_ground_y);
-                std::cout << "************************************************************ Min y distance is " << min_y_distance << std::endl;
-                if (min_y_distance < min_distance && feet_length> min_y_distance) {
-                    min_distance = min_y_distance;
-                    closest_plane_index = idx;
-                    high_step = current_high;
-                    Eigen::Matrix3f covariance_matrix_plane;
-                    Eigen::Vector4f centroid_plane;
-                    pcl::compute3DCentroid(*planes[idx], centroid_plane);
-                    pcl::computeCovarianceMatrixNormalized(*planes[idx], centroid_plane, covariance_matrix_plane);
-                    Eigen::SelfAdjointEigenSolver <Eigen::Matrix3f> solver_plane(covariance_matrix_plane);
-                    Eigen::Vector3f normal_plane = solver_plane.eigenvectors().col(0);
-                    current_angle = std::acos(normal_plane.dot(Eigen::Vector3f(0.0f, 0.0f, 1.0f)));
-                    current_angle = current_angle * 180 / M_PI;
-                }
-            }
-            if (closest_plane_index == -1) {
-                std::cout << "No suitable plane found." << std::endl;
-                closest_plane_index = 0;
-                planes[ground_plan_index]->points.clear();
-                for (auto point : ground_cloud->points) {
-                    planes[ground_plan_index]->points.push_back(point);
-                }
-            }
-            planes[closest_plane_index]->header = ground_cloud->header;
-            planes[closest_plane_index]->height = 1;
-            planes[closest_plane_index]->width = planes[closest_plane_index]->points.size();
-
-            std::cout << "************************************************************ High step is " << high_step << std::endl;
-            std::cout << "************************************************************ Angle is " << current_angle << std::endl;
-
-//            if (std::abs(mean_ground_z - camera_height) > 0.05 && std::abs(current_angle) < 10.0) {
-//                std::cout << "Ground plane is not detected properly height is " << std::abs(mean_ground_z) << std::endl;
-//                float dist_y = std::abs(ground_cloud->points[0].y - ground_cloud->points[ground_points - 1].y);
-//                float dist_z = std::abs(std::abs(mean_ground_z) - camera_height);
-//                transpose_z(obs_cloud, dist_z, 0.0);
-//                transpose_z(input_cloud, dist_z, 0.0);
-//                transpose_z(input_cloud_original, dist_z, 0.0);
-//                for(auto& plane : planes) {
-//                    transpose_z(plane, dist_z, 0.0);
-//                }
-//                transpose_z(ground_cloud, 0.0, dist_y);
-//                // planes.push_back(ground_cloud);
-//            }
+            set_foothold_plane(planes, ground_cloud, ground_plan_index, feet_length, camera_height, mean_ground_z, closest_plane_index, high_step, current_angle);
 
             camera_offs_z = 0.0, ground_points = 0;
             for (auto& point : ground_cloud->points) {
