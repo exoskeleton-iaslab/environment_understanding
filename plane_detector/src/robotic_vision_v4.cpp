@@ -497,7 +497,7 @@ int main (int argc, char** argv) {
     msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
-    bool publish_flag = true;
+    bool enter_flag = true;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -1039,16 +1039,28 @@ int main (int argc, char** argv) {
   			msg.data= foot_tip_pos;
   			pub10.publish(msg);
 
-           if (final_step_height == -1.0) {
-               if(std::abs(current_angle) > 10.0){
-                   final_step_height = slope_height - rf_l;
-               }
-               else{
-                   final_step_height = -high_step;
-               }
-               msg_step_height.data= final_step_height;
-               msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
-           }
+            Eigen::Vector3f z_axis(0.0f, 0.0f, 1.0f);
+            Eigen::Vector3f normal_plane = compute_normal_pca(planes[closest_plane_index]);
+            float dot = normal_plane.dot(z_axis);
+            Eigen::Vector3f cross = z_axis.cross(normal_plane);
+            float sign = (cross.z() < 0) ? -1.0f : 1.0f;
+
+            if (enter_flag && high_step != 0.0) {
+                enter_flag = false;
+                if(std::abs(current_angle) > 10.0){
+                    if (sign > 0){
+                        final_step_height = slope_height + rf_l;
+                    }
+                    else{
+                        final_step_height = slope_height - rf_l;
+                    }
+                }
+                else{
+                    final_step_height = high_step;
+                }
+                msg_step_height.data= final_step_height;
+                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
+            }
 
             if (final_step_height != -1.0) {
                 foothold_height.publish(msg_step_height);
