@@ -497,8 +497,6 @@ int main (int argc, char** argv) {
     msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
-    std::shared_ptr<open3d::geometry::PointCloud> previous = nullptr;
-    std::deque<std::shared_ptr<open3d::geometry::PointCloud>> history = std::deque<std::shared_ptr<open3d::geometry::PointCloud>>();
     bool publish_flag = true;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
@@ -521,11 +519,6 @@ int main (int argc, char** argv) {
 	  		pcl::IndicesPtr remaining (new std::vector<int>);
 	  		remaining->resize (nr_points);
 	  		for (size_t i = 0; i < remaining->size (); i++) { (*remaining)[i] = static_cast<int>(i); }
-
-            // ICP
-            // RosbagToPly(input_cloud, previous, history);
-
-
 
 	 		//variables used for z-axis transalation
 			float camera_offs_z=0.0;
