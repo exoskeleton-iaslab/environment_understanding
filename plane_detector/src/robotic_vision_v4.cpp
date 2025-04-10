@@ -245,7 +245,7 @@ float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr clo
 }
 
 int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points) {
-    float min_distance = std::numeric_limits<float>::max();;
+    float min_distance = std::numeric_limits<float>::max();
     int min_index = 0;
     Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
     Eigen::Vector3f normal = compute_normal_pca(planes[0]);
@@ -457,7 +457,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
     ros::Publisher foothold_height = nh.advertise<std_msgs::Float32>("foothold_height", 1);
-    ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stairs/stair_edge", 1);
+    ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stair_edge", 1);
 	float dist_bt_feet;
 	std::string temp;
 	ros::param::get("~dist_origin_foot", dist_bt_feet);
@@ -529,6 +529,12 @@ int main (int argc, char** argv) {
 			pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //pointcloud containing ground plane points
 			ground_cloud->header = input_cloud->header; //needed to display in the right frame
 			ground_cloud->height=1; //unordered cloud
+
+//            pcl::PassThrough<pcl::PointXYZRGB> pass;
+//            pass.setInputCloud(input_cloud);
+//            pass.setFilterFieldName("x");
+//            pass.setFilterLimits(-0.4, 0.4);
+//            pass.filter(*input_cloud);
 
             pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud_original(new pcl::PointCloud<pcl::PointXYZRGB>);
             *input_cloud_original = *input_cloud;
@@ -1059,7 +1065,20 @@ int main (int argc, char** argv) {
                     final_step_height = high_step;
                 }
                 msg_step_height.data= final_step_height;
-                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
+
+                pcl::PassThrough<pcl::PointXYZRGB> pass_1;
+                pass_1.setInputCloud(planes[closest_plane_index]);
+                pass_1.setFilterFieldName("x");
+                pass_1.setFilterLimits(-0.3, 0.3);
+                pass_1.filter(*planes[closest_plane_index]);
+
+                pcl::PassThrough<pcl::PointXYZRGB> pass_2;
+                pass_2.setInputCloud(ground_cloud);
+                pass_2.setFilterFieldName("x");
+                pass_2.setFilterLimits(-0.3, 0.3);
+                pass_2.filter(*ground_cloud);
+
+                msg_stair_edge.data = std::abs(planes[closest_plane_index]->points[0].y - ground_cloud->points[0].y);
             }
 
             if (final_step_height != -1.0) {

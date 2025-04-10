@@ -28,7 +28,7 @@
 #include <std_msgs/Int8.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/statistical_outlier_removal.h>
-
+#include <pcl/filters/passthrough.h>
 struct cmp_xyz {
 	inline bool operator() (const pcl::PointXYZ& pt1, const pcl::PointXYZ& pt2){
 		return (pt1.y < pt2.y);
