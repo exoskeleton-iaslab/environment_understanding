@@ -64,7 +64,7 @@ void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 		
 						//if(cloud_buffer[k].at(i,j).x!=NAN) means[0] += cloud_buffer[k].at(i,j).x;
 						//if(cloud_buffer[k].at(i,j).y!=NAN) means[1] += cloud_buffer[k].at(i,j).y;
-						//if(cloud_buffer[k].at(i,j).z!=NAN) means[2] += cloud_buffer[k].at(i,j).z;	
+						//if(cloud_buffer[k].at(i,j).z!=NAN) means[2] += cloud_buffer[k].at(i,j).z;
 						
 						medians[0][k] = cloud_buffer[k].at(i,j).x;
 						medians[1][k] = cloud_buffer[k].at(i,j).y;
@@ -142,9 +142,15 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
     pcl::SACSegmentationFromNormals<pcl::PointXYZRGB, pcl::Normal> seg;
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_NORMAL_PLANE);
-    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setMethodType(pcl::SAC_MSAC);
     seg.setNormalDistanceWeight(0.001);
     seg.setDistanceThreshold(0.01);
+    seg.setMaxIterations(1000);
+    seg.setEpsAngle(0.1f * M_PI / 180.0f);
+    seg.setRadiusLimits(0.0, 0.05);
+    seg.setProbability(0.99);
+
+
 
     while (cloud_remaining->points.size() > min_inliers) {
         pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
@@ -491,6 +497,9 @@ int main (int argc, char** argv) {
     msg_stair_edge.data = -1;
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
+    std::shared_ptr<open3d::geometry::PointCloud> previous = nullptr;
+    std::deque<std::shared_ptr<open3d::geometry::PointCloud>> history = std::deque<std::shared_ptr<open3d::geometry::PointCloud>>();
+    bool publish_flag = true;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -512,7 +521,12 @@ int main (int argc, char** argv) {
 	  		pcl::IndicesPtr remaining (new std::vector<int>);
 	  		remaining->resize (nr_points);
 	  		for (size_t i = 0; i < remaining->size (); i++) { (*remaining)[i] = static_cast<int>(i); }
-	  
+
+            // ICP
+            // RosbagToPly(input_cloud, previous, history);
+
+
+
 	 		//variables used for z-axis transalation
 			float camera_offs_z=0.0;
 			int ground_points=0;
@@ -546,7 +560,7 @@ int main (int argc, char** argv) {
             multiple_planes(planes, obs_cloud, cloud_remaining);
             if(planes.size() == 0) {
                 std::cout << "No planes found." << std::endl;
-                break;
+                continue;
             }
 
             ground_cloud->points.clear();
@@ -935,7 +949,7 @@ int main (int argc, char** argv) {
 	  				int colored_points=0;
 	  	 			for(int j=0; j< planes[closest_plane_index]->points.size();j++){
 		  				if(best_window[i][k].x ==planes[closest_plane_index]->points[j].x &&  best_window[i][k].y ==planes[closest_plane_index]->points[j].y && best_window[i][k].z ==planes[closest_plane_index]->points[j].z){
-		  					  if(planes[closest_plane_index]->points[j].z < slope_height && planes[closest_plane_index]->points[j].z > 0.0){
+		  					  if(planes[closest_plane_index]->points[j].z < slope_height){
                                   slope_height = planes[closest_plane_index]->points[j].z;
                               }
                               uint8_t r = 255, g = 255, b = 0;
@@ -1032,18 +1046,18 @@ int main (int argc, char** argv) {
   			msg.data= foot_tip_pos;
   			pub10.publish(msg);
 
-           if (final_step_height < 0.0 && high_step > 0.0) {
-               if(std::abs(current_angle) > 15.0){
-                   final_step_height = slope_height + rf_l;
+           if (final_step_height == -1.0) {
+               if(std::abs(current_angle) > 10.0){
+                   final_step_height = slope_height - rf_l;
                }
                else{
-                   final_step_height = high_step;
+                   final_step_height = -high_step;
                }
                msg_step_height.data= final_step_height;
                msg_stair_edge.data = planes[closest_plane_index]->points[0].y;
            }
 
-            if (final_step_height > 0.0) {
+            if (final_step_height != -1.0) {
                 foothold_height.publish(msg_step_height);
             }
             if (msg_stair_edge.data > 0.0){
