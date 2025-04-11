@@ -233,10 +233,11 @@ void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes
     std::cout << "Totally found " << planes.size() << " planes." << std::endl;
 }
 
-float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud) {
+float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, const Eigen::Vector3f& p){
     float min_distance = std::numeric_limits<float>::max();
     for (const auto point : cloud->points) {
-        float distance = std::sqrt(std::pow(point.x, 2) + std::pow(point.y, 2));
+        float distance = std::sqrt(std::pow(point.x - p.x(), 2) +
+                                   std::pow(point.y - p.y(), 2));
         if (distance < min_distance) {
             min_distance = distance;
         }
@@ -252,8 +253,14 @@ int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> plan
     for (int idx = 0; idx < planes.size(); idx++) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane(new pcl::PointCloud<pcl::PointXYZRGB>);
         *plane = *planes[idx];
+        pcl::PassThrough<pcl::PointXYZRGB> pass;
+        pass.setInputCloud(plane);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(-0.2, 0.2);
+        pass.filter(*plane);
         float tilt = rotate_point_cloud_plane(plane, n_z, normal.normalized());
-        float distance = find_minimal_euclidian_distance(plane);
+        Eigen::Vector3f custom_point(0.0f, -4.0f, 0.0f);
+        float distance = find_minimal_euclidian_distance(plane, custom_point);
         if (distance < min_distance) {
             min_distance = distance;
             min_index = idx;
@@ -529,12 +536,6 @@ int main (int argc, char** argv) {
 			pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //pointcloud containing ground plane points
 			ground_cloud->header = input_cloud->header; //needed to display in the right frame
 			ground_cloud->height=1; //unordered cloud
-
-//            pcl::PassThrough<pcl::PointXYZRGB> pass;
-//            pass.setInputCloud(input_cloud);
-//            pass.setFilterFieldName("x");
-//            pass.setFilterLimits(-0.4, 0.4);
-//            pass.filter(*input_cloud);
 
             pcl::PointCloud<pcl::PointXYZRGB>::Ptr input_cloud_original(new pcl::PointCloud<pcl::PointXYZRGB>);
             *input_cloud_original = *input_cloud;
@@ -1062,7 +1063,17 @@ int main (int argc, char** argv) {
                     }
                 }
                 else{
-                    final_step_height = high_step;
+                    float check_z_mean = 0.0;
+                    for (auto& point : planes[closest_plane_index]->points) {
+                        check_z_mean += point.z;
+                    }
+                    check_z_mean /= planes[closest_plane_index]->points.size();
+                    if (check_z_mean > 0.0){
+                        final_step_height = high_step;
+                    }
+                    else{
+                        final_step_height = -high_step;
+                    }
                 }
                 msg_step_height.data= final_step_height;
 
@@ -1071,14 +1082,8 @@ int main (int argc, char** argv) {
                 pass_1.setFilterFieldName("x");
                 pass_1.setFilterLimits(-0.3, 0.3);
                 pass_1.filter(*planes[closest_plane_index]);
-
-                pcl::PassThrough<pcl::PointXYZRGB> pass_2;
-                pass_2.setInputCloud(ground_cloud);
-                pass_2.setFilterFieldName("x");
-                pass_2.setFilterLimits(-0.3, 0.3);
-                pass_2.filter(*ground_cloud);
-
-                msg_stair_edge.data = std::abs(planes[closest_plane_index]->points[0].y - ground_cloud->points[0].y);
+                msg_stair_edge.data = std::abs(planes[closest_plane_index]->points[0].y);
+                pcl::PointCloud<pcl::PointXYZRGB>::Ptr tp(new pcl::PointCloud<pcl::PointXYZRGB>);
             }
 
             if (final_step_height != -1.0) {
