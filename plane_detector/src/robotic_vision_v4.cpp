@@ -505,6 +505,8 @@ int main (int argc, char** argv) {
 	std::cout<<"Max it: " << ransac_max_it << std::endl;
 	std::cout<<"Threshold: " << ransac_th << std::endl;
     bool enter_flag = true;
+    std::queue<float> step_height_queue;
+    std::queue<float> stair_edge_queue;
     while(ros::ok()){
 		new_data= new_leg && new_cloud;
 		if(new_data){
@@ -1053,7 +1055,6 @@ int main (int argc, char** argv) {
             float sign = (cross.z() < 0) ? -1.0f : 1.0f;
 
             if (enter_flag && high_step != 0.0) {
-                enter_flag = false;
                 if(std::abs(current_angle) > 10.0){
                     if (sign > 0){
                         final_step_height = slope_height + rf_l;
@@ -1075,21 +1076,29 @@ int main (int argc, char** argv) {
                         final_step_height = -high_step;
                     }
                 }
-                msg_step_height.data= final_step_height;
 
                 pcl::PassThrough<pcl::PointXYZRGB> pass_1;
                 pass_1.setInputCloud(planes[closest_plane_index]);
                 pass_1.setFilterFieldName("x");
                 pass_1.setFilterLimits(-0.3, 0.3);
                 pass_1.filter(*planes[closest_plane_index]);
-                msg_stair_edge.data = std::abs(planes[closest_plane_index]->points[0].y);
-                pcl::PointCloud<pcl::PointXYZRGB>::Ptr tp(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+                if(step_height_queue.size() > 15 && stair_edge_queue.size() > 15){
+                    enter_flag = false;
+                }
+                step_height_queue.push(final_step_height);
+                stair_edge_queue.push(std::abs(planes[closest_plane_index]->points[0].y));
+
+                final_step_height = mostFrequentElement(step_height_queue);
+                msg_step_height.data= final_step_height;
+
+                msg_stair_edge.data = mostFrequentElement(stair_edge_queue);
             }
 
-            if (final_step_height != -1.0) {
+            if (!enter_flag) {
                 foothold_height.publish(msg_step_height);
             }
-            if (msg_stair_edge.data > 0.0){
+            if (!enter_flag){
                 stair_edge.publish(msg_stair_edge);
             }
   			

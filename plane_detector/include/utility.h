@@ -29,6 +29,7 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/passthrough.h>
+#include <unordered_map>
 struct cmp_xyz {
 	inline bool operator() (const pcl::PointXYZ& pt1, const pcl::PointXYZ& pt2){
 		return (pt1.y < pt2.y);
@@ -153,3 +154,21 @@ void set_foothold_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& pla
                         int ground_plan_index, float feet_length, float camera_height, float mean_ground_z,
                         int& closest_plane_index, float& high_step, float& current_angle);
 Eigen::Vector3f compute_normal_pca(pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane);
+
+template<typename T>
+T mostFrequentElement(std::queue<T> q) {
+    std::unordered_map<T, int> freq;
+    T most_frequent;
+    int max_count = 0;
+
+    while (!q.empty()) {
+        T val = q.front();
+        q.pop();
+        freq[val]++;
+        if (freq[val] > max_count) {
+            max_count = freq[val];
+            most_frequent = val;
+        }
+    }
+    return most_frequent;
+}
