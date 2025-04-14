@@ -129,7 +129,7 @@ void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
-    int min_inliers = 500;
+    int min_inliers = 400;
     pcl::ExtractIndices<pcl::PointXYZRGB> extract;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -464,7 +464,7 @@ int main (int argc, char** argv) {
 	ros::Publisher pub9 = nh.advertise<std_msgs::Float32> ("tilt_angle", 1);
 	ros::Publisher pub10 = nh.advertise<std_msgs::Float32> ("foot_tip_pos", 1);
     ros::Publisher foothold_height = nh.advertise<std_msgs::Float32>("foothold_height", 1);
-    ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stair_edge", 1);
+    ros::Publisher stair_edge = nh.advertise<std_msgs::Float32>("stair_edge_raw", 1);
 	float dist_bt_feet;
 	std::string temp;
 	ros::param::get("~dist_origin_foot", dist_bt_feet);
