@@ -129,7 +129,7 @@ void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining){
-    int min_inliers = 400;
+    int min_inliers = 350;
     pcl::ExtractIndices<pcl::PointXYZRGB> extract;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -251,6 +251,9 @@ int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> plan
     Eigen::Vector3f n_z(0.0f, 0.0f, 1.0f);
     Eigen::Vector3f normal = compute_normal_pca(planes[0]);
     for (int idx = 0; idx < planes.size(); idx++) {
+        if (planes[idx]->points.size() < 350) {
+            continue;
+        }
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane(new pcl::PointCloud<pcl::PointXYZRGB>);
         *plane = *planes[idx];
         pcl::PassThrough<pcl::PointXYZRGB> pass;
@@ -562,7 +565,7 @@ int main (int argc, char** argv) {
             multiple_planes(planes, obs_cloud, cloud_remaining);
             if(planes.size() == 0) {
                 std::cout << "No planes found." << std::endl;
-                continue;
+                exit(1);
             }
 
             ground_cloud->points.clear();
