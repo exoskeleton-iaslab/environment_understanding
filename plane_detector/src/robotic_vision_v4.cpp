@@ -291,23 +291,35 @@ void set_foothold_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& pla
     closest_plane_index = -1;
     high_step = 0.0;
     current_angle = 0.0;
+    Eigen::Vector3f custom_point(0.0f, -5.0f, 0.0f);
+    int default_closest_plane = -1;
     float min_distance = std::numeric_limits<float>::max();
-    float min_ground_y = find_minimal_euclidian_distance(ground_cloud);
     for (int idx = 0; idx < planes.size(); idx++) {
-        if (idx == ground_plan_index) {
-            continue;
-        }
         float current_high = 0.0;
         for (auto& point : planes[idx]->points) {
             current_high += std::abs(point.z - mean_ground_z);
         }
         current_high /= planes[idx]->points.size();
 
-        float min_plane_y = find_minimal_euclidian_distance(planes[idx]);
-        float min_y_distance = std::abs(min_plane_y - min_ground_y);
-        std::cout << "Min y distance is " << min_y_distance << std::endl;
-        if (min_y_distance < min_distance && feet_length > min_y_distance) {
-            min_distance = min_y_distance;
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane(new pcl::PointCloud<pcl::PointXYZRGB>);
+        *plane = *planes[idx];
+        pcl::PassThrough<pcl::PointXYZRGB> pass;
+        pass.setInputCloud(plane);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(-0.2, 0.2);
+        pass.filter(*plane);
+
+        float min_plane_y = find_minimal_euclidian_distance(plane, custom_point);
+        float plane_distance = std::abs(plane->points[0].y - plane->points[plane->points.size() - 1].y);
+        std::cout << "plane_distance: " << plane_distance << std::endl;
+        std::cout << "min_distance: " << min_distance << std::endl;
+        std::cout << "feet_length: " << feet_length << std::endl;
+        if (min_plane_y < min_distance){
+            default_closest_plane = idx;
+        }
+        float eps = 0.05;
+        if (min_plane_y < min_distance && (feet_length+eps) < plane_distance) {
+            min_distance = min_plane_y;
             closest_plane_index = idx;
             high_step = current_high;
             Eigen::Vector3f normal_plane = compute_normal_pca(planes[idx]);
@@ -317,13 +329,9 @@ void set_foothold_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& pla
                 current_angle = 180.0 - current_angle;
             }
         }
-    }
-    if (closest_plane_index == -1) {
-        std::cout << "No suitable plane found." << std::endl;
-        closest_plane_index = 0;
-        planes[ground_plan_index]->points.clear();
-        for (auto point : ground_cloud->points) {
-            planes[ground_plan_index]->points.push_back(point);
+
+        if (closest_plane_index == -1){
+            closest_plane_index = default_closest_plane;
         }
     }
     planes[closest_plane_index]->header = ground_cloud->header;
