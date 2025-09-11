@@ -145,7 +145,7 @@ void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
                          std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
                          bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang);
 
-void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud);
+void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud, ros::Publisher& obstacles_distance_pub);
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud);
 void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float y);
 float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, const Eigen::Vector3f& p = Eigen::Vector3f(0.0f, 0.0f, 0.0f));

@@ -18,7 +18,8 @@ bool origin_eliminated=false;
 bool ref_acquired=false;
 //variables below should be provided as ros params
 float ema_coeff;
-float max_step_length=0.7;
+float max_step_length=0.8;
+float step_length=max_step_length/2;
 //variables below should be provided by topics
 int swing_leg=-1; // "-1": both legs can be swing leg(first step)	"0": left swing leg	"1": right swing leg 
 float reference_tilt;
@@ -124,6 +125,10 @@ void leg_cb(const std_msgs::Int8::ConstPtr& msg){
 void fs_cb(const std_msgs::Bool::ConstPtr& msg){
 	first_step=msg->data; // pivot in CAMERA COORDS!!!!!!!
 	//max_step_length = max_sl_const + pivot;//DA FINIRE
+}
+
+void step_length_cb(const std_msgs::Float32::ConstPtr& msg){
+    step_length=msg->data;
 }
 
 void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
@@ -391,7 +396,7 @@ void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float 
     }
 }
 
-void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
+void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud, ros::Publisher& obstacles_distance_pub) {
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr obs_cloud2(new pcl::PointCloud<pcl::PointXYZRGB>);
     obs_cloud2->header = obs_cloud->header;
     obs_cloud2->height = 1;
@@ -421,15 +426,31 @@ void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud) {
         current_clusters.push_back(single_cluster);
     }
 
+    int i=-1;
+    std_msgs::Float32MultiArray msg;
     for (const auto& cluster : current_clusters) {
+        i++;
         uint8_t r = 255, g = 0, b = 255;
+
+        float min_distance = std::numeric_limits<float>::max();
         for (const auto& point : cluster) {
+            float distance = std::sqrt(std::pow(point.x, 2) +
+                                       std::pow(point.y, 2) +
+                                       std::pow(point.z, 2));
+            if (distance < min_distance) {
+                min_distance = distance;
+            }
             pcl::PointXYZRGB colored_point = point;
             uint32_t rgb = ((uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b);
             colored_point.rgb = *reinterpret_cast<float*>(&rgb);
             obs_cloud->points.push_back(colored_point);
         }
+        if (min_distance < 1.5){
+            msg.data.push_back(min_distance);
+        }
+        std::cout << "Obstacle at distance: " << min_distance << " meters " << "of cluster number " << i << std::endl;
     }
+    obstacles_distance_pub.publish(msg);
 }
 
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud) {
@@ -461,8 +482,10 @@ int main (int argc, char** argv) {
 	ros::Subscriber sub_pivot = nh.subscribe ("pivot_camera_coord", 1, pivot_cb);
 	ros::Subscriber sub_leg = nh.subscribe ("swing_leg", 1, leg_cb);
 	ros::Subscriber sub_fs = nh.subscribe ("first_step_global", 1, fs_cb);
+    ros::Subscriber sub_step_length = nh.subscribe ("step_length", 1, step_length_cb);
 	//bool subscriber should be added in order to know whether the robotic vision module should be active
-	ros::Publisher pub = nh.advertise<pcl::PCLPointCloud2> ("outcloud", 1);
+    ros::Publisher obstacles_distance_pub = nh.advertise<std_msgs::Float32MultiArray>("obstacles_distance", 1);
+    ros::Publisher pub = nh.advertise<pcl::PCLPointCloud2> ("outcloud", 1);
 	ros::Publisher pub2 = nh.advertise<pcl::PCLPointCloud2> ("obstacles", 1);
 	ros::Publisher pub3 = nh.advertise<pcl::PCLPointCloud2> ("tracks", 1);
     ros::Publisher pub_planes = nh.advertise<pcl::PCLPointCloud2> ("planes", 1);
@@ -573,7 +596,7 @@ int main (int argc, char** argv) {
             multiple_planes(planes, obs_cloud, cloud_remaining);
             if(planes.size() == 0) {
                 std::cout << "No planes found." << std::endl;
-                exit(1);
+                planes.push_back(cloud_remaining);
             }
 
             ground_cloud->points.clear();
@@ -581,7 +604,7 @@ int main (int argc, char** argv) {
             ground_cloud->height=1;
             int ground_plan_index = define_ground_plane(planes, ground_cloud, camera_offs_z, ground_points);
 
-            group_obstacles(obs_cloud);
+            group_obstacles(obs_cloud, obstacles_distance_pub);
 
             align_point_cloud_z(ground_cloud, input_cloud, obs_cloud, input_cloud_original, planes, alignment_z, ref_acquired, reference_tilt, tilt_ang);
             float mean_ground_z = 0.0;
@@ -798,7 +821,7 @@ int main (int argc, char** argv) {
 	  		float stddev;
 	  		if(first_step) stddev = 0.4f; //stddev of optimal step length
 	  		else stddev = 0.55f; //CHANGED 13/03/2024
-	  		float mean = max_step_length/2; //mean of optimal step length
+            float mean = step_length;
 	  		float exponential_component;
   			float min_obs_dist;
   			float max_obs_dist;
