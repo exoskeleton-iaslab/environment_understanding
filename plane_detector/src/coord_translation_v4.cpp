@@ -11,11 +11,13 @@ float ref_tilt;
 float tilt;
 bool next_leg;
 vector<float> obstacle_shape;
+vector<float> obstacle_shape_unseen;
 bool new_ang=false;
 bool new_foot=false;
 bool new_piv=false;
 bool new_cam=false;
 bool new_obs= false;
+bool new_obs_unseen= false;
 bool new_leg = false;
 bool new_next = false;
 bool first_step=true;
@@ -65,6 +67,11 @@ void obstacle_cb(const std_msgs::Float32MultiArray::ConstPtr& msg){
 	for(int i=0; i<4;i++) measurements[i].push_back(msg->data[i]);
 	measurements.push_back(temp);*/
 	new_obs=true;
+}
+
+void obstacle_unseen_cb(const std_msgs::Float32MultiArray::ConstPtr& msg){
+    obstacle_shape_unseen = msg->data;
+    new_obs_unseen=true;
 }
 
 void leg_cb(const std_msgs::Int8::ConstPtr& msg){
@@ -130,6 +137,7 @@ int main (int argc, char** argv) {
  //ros::Subscriber sub3 = nh.subscribe("/pivot_tip_raw", 1000, pivot_cb);
  ros::Subscriber sub_com = nh.subscribe("/CoM_height_raw", 1, cam_cb);
  ros::Subscriber sub_obstacles = nh.subscribe("/obstacle_shape_raw", 1, obstacle_cb);
+ ros::Subscriber sub_obstacles_unseen = nh.subscribe("/obstacle_shape_raw_unseen", 1, obstacle_unseen_cb);
  ros::Subscriber sub_swing_leg = nh.subscribe("/swing_leg", 1, leg_cb);
  ros::Subscriber sub_next_swing_leg = nh.subscribe("/next_swing_leg", 1, next_leg_cb);
  ros::Subscriber sub_ref_tilt = nh.subscribe("/reference_tilt", 1, ref_cb);
@@ -138,6 +146,7 @@ int main (int argc, char** argv) {
  ros::Subscriber sub_pos = nh.subscribe("/foot_tip_pos", 1, pos_cb);
  //Publishers
  ros::Publisher pub = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape", 1);
+ ros::Publisher pub1 = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape_unseen", 1);
  ros::Publisher pub2 =nh.advertise<std_msgs::Float32> ("foothold", 1);
  ros::Publisher pub3 = nh.advertise<std_msgs::Float32> ("CoM_height", 1);
  ros::Publisher pub4 = nh.advertise<std_msgs::Float32> ("pivot", 1);
@@ -168,17 +177,19 @@ int main (int argc, char** argv) {
  float knee_y, knee_y_p;
  float knee_z, knee_z_p;
  float heel_y, heel_y_p;
+ float heel_y_unseen;
  float heel_z, heel_z_p;
  float trans_com;
  float trans_pivot;
  vector<float> trans_obs;
+ vector<float> trans_obs_unseen;
  float trans_foothold;
  string s, opp_s;
  vector<float> reconstructed_angles;
  
  
  while(ros::ok()){
- 	new_data = new_foot && new_ang && new_cam && new_obs && new_tilt; //removed new leg
+ 	new_data = new_foot && new_ang && new_cam && new_obs && new_obs_unseen && new_tilt; //removed new leg
 	if(new_data) { //condition should be new_data, put true to run continuously
 		//OLD COM CALCULATION (BEST ONE!)
 		com_y = -camera_com_offs_y;
@@ -210,6 +221,7 @@ int main (int argc, char** argv) {
 			knee_y = com_y + L1* sin((measurements[0]) * M_PI/180); //left angle has negative hip angle
 			knee_z = com_z - L1 * cos((measurements[0])* M_PI/180);
 			heel_y = knee_y + L2 * sin((measurements[0] + measurements[1])* M_PI/180);
+            heel_y_unseen = knee_y + L2 * sin((measurements[2] + measurements[3])* M_PI/180); //translation value
 			heel_z = knee_z - L2 * cos((measurements[0] + measurements[1])* M_PI/180);
 			knee_y_p = com_y + L1* sin((measurements[2])* M_PI/180); //left angle has negative hip angle
 			knee_z_p = com_z - L1 * cos((measurements[2])* M_PI/180);
@@ -243,6 +255,7 @@ int main (int argc, char** argv) {
 			knee_y = com_y + L1* sin((measurements[2])* M_PI/180); //right angle has positive hip angle
 			knee_z = com_z - L1 * cos((measurements[2])* M_PI/180);
 			heel_y = knee_y + L2 * sin((measurements[2] + measurements[3])* M_PI/180); //translation value
+            heel_y_unseen = knee_y + L2 * sin((measurements[0] + measurements[1])* M_PI/180);
 			heel_z = knee_z - L2 * cos((measurements[2] + measurements[3])* M_PI/180);
 			knee_y_p = com_y + L1* sin((measurements[0])* M_PI/180); //left angle has negative hip angle
 			knee_z_p = com_z - L1 * cos((measurements[0])* M_PI/180);
@@ -275,6 +288,10 @@ int main (int argc, char** argv) {
 		if(obstacle_shape.size()>0){
 			std::cout<<"Obstacles start at y: "<< obstacle_shape[0] << " and ends at y: "<<obstacle_shape[obstacle_shape.size()-2]<<std::endl; 
 		}
+
+        if(obstacle_shape_unseen.size()>0){
+            std::cout<<"Unseen Obstacles start at y: "<< obstacle_shape_unseen[0] << " and ends at y: "<<obstacle_shape_unseen[obstacle_shape_unseen.size()-2]<<std::endl;
+        }
 		
 		//PROTOTYPE: CALCULATION OF TILT ANGLE IN CLOSED FORM
 		float l = euclidean_dist(0,cam_z, heel_y, heel_z);
@@ -282,6 +299,7 @@ int main (int argc, char** argv) {
 		float gamma = acos(cam_z/l) - theta; 
 		std::cout<<"Angle gamma is: "<< rad_to_deg(gamma) << std::endl; 
 		heel_y = - l * sin(gamma+theta);
+        heel_y_unseen = - l * sin(gamma+theta);
 		heel_z =cam_z - l * cos(gamma+theta);
 		
 		//UPDATE OTHER POSITIONS
@@ -406,6 +424,7 @@ int main (int argc, char** argv) {
 		//FINAL TRANSLATION TO ALIGN SWING FOOT WITH ORIGIN
 		
 		float max_h=0;
+        float max_h_unseen=0;
 		
 		trans_obs = vector<float>(obstacle_shape.size());
 		for(int i=0; i< obstacle_shape.size();i++) { //only change y coords, which are the even indexes
@@ -415,6 +434,15 @@ int main (int argc, char** argv) {
 				if(obstacle_shape[i]>max_h) max_h = obstacle_shape[i];
 			}
 		}
+
+        trans_obs_unseen = vector<float>(obstacle_shape_unseen.size());
+        for(int i=0; i< obstacle_shape_unseen.size();i++) {
+            if(i%2==0) trans_obs_unseen[i] = obstacle_shape_unseen[i] - heel_y_unseen;
+            else {
+                trans_obs_unseen[i] = obstacle_shape_unseen[i];
+                if(obstacle_shape_unseen[i]>max_h_unseen) max_h_unseen = obstacle_shape_unseen[i];
+            }
+        }
 			
 		
 		com_y-=heel_y;
@@ -446,6 +474,11 @@ int main (int argc, char** argv) {
 			std::cout<<"Obstacles start at y: "<< trans_obs[0] << " and ends at y: "<<trans_obs[trans_obs.size()-2]<<std::endl; 
 			std::cout<<"Obstacles Max Height: "<< max_h<<std::endl;
 		}
+
+        if(trans_obs_unseen.size()>0){
+            std::cout<<"Obstacles start at y: "<< trans_obs_unseen[0] << " and ends at y: "<<trans_obs_unseen[trans_obs_unseen.size()-2]<<std::endl;
+            std::cout<<"Obstacles Max Height: "<< max_h_unseen<<std::endl;
+        }
 			 
 		std_msgs::Float32MultiArray outp;
   		outp.layout.dim.push_back(std_msgs::MultiArrayDimension());
@@ -455,6 +488,16 @@ int main (int argc, char** argv) {
   		outp.data.clear();
   		outp.data.insert(outp.data.end(), trans_obs.begin(), trans_obs.end());
   		pub.publish(outp);
+
+        std_msgs::Float32MultiArray outp_unseen;
+        outp_unseen.layout.dim.push_back(std_msgs::MultiArrayDimension());
+        outp_unseen.layout.dim[0].size = trans_obs_unseen.size();
+        outp_unseen.layout.dim[0].stride = 1;
+        outp_unseen.layout.dim[0].label = "y-z"; // or whatever name you typically use to index
+        outp_unseen.data.clear();
+        outp_unseen.data.insert(outp_unseen.data.end(), trans_obs_unseen.begin(), trans_obs_unseen.end());
+        pub1.publish(outp_unseen);
+
   		std_msgs::Float32 msg;
   		msg.data= trans_foothold;
   		pub2.publish(msg);
@@ -467,6 +510,7 @@ int main (int argc, char** argv) {
   		new_ang=false;
   		new_cam=false;
   		new_obs=false;
+        new_obs_unseen=false;
   		new_foot=false;
   		new_leg=false;
   		new_tilt=false;

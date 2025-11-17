@@ -18,10 +18,10 @@ bool origin_eliminated=false;
 bool ref_acquired=false;
 //variables below should be provided as ros params
 float ema_coeff;
-float max_step_length=0.8;
-float step_length=max_step_length/2;
+float max_step_length=1.0;
+float step_length=0.0;
 //variables below should be provided by topics
-int swing_leg=-1; // "-1": both legs can be swing leg(first step)	"0": left swing leg	"1": right swing leg 
+int swing_leg=-1; // "-1": both legs can be swing leg(first step)	"0": left swing leg	"1": right swing leg
 float reference_tilt;
 //float max_sl_const = 0.0; //constant used to infer maximum step length
 float leaf_size;
@@ -54,7 +54,7 @@ void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 				cloud_buffer[i-1] = cloud_buffer[i];
 			}
 			cloud_buffer[4] = *new_cloud;
-			
+
 			for(int j=0;j<mean_cloud->height;j++){
 				for(int i=0;i<mean_cloud->width;i++){
 					//REMOVE ORIGIN POINT FROM CLOUD
@@ -62,11 +62,11 @@ void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 					float means[3] = {0,0,0};
 					float medians[3][5];
 					for(int k=0;k<5;k++) {
-		
+
 						//if(cloud_buffer[k].at(i,j).x!=NAN) means[0] += cloud_buffer[k].at(i,j).x;
 						//if(cloud_buffer[k].at(i,j).y!=NAN) means[1] += cloud_buffer[k].at(i,j).y;
 						//if(cloud_buffer[k].at(i,j).z!=NAN) means[2] += cloud_buffer[k].at(i,j).z;
-						
+
 						medians[0][k] = cloud_buffer[k].at(i,j).x;
 						medians[1][k] = cloud_buffer[k].at(i,j).y;
 						medians[2][k] = cloud_buffer[k].at(i,j).z;
@@ -77,23 +77,23 @@ void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
 					means[0] = medians[0][2];
 					means[1] = medians[1][2];
 					means[2] = medians[2][2];
-					
+
 					if(mean_cloud->at(i,j).x!=NAN) mean_cloud->at(i,j).x = means[0];
 					if(mean_cloud->at(i,j).y!=NAN) mean_cloud->at(i,j).y = means[1];
 					if(mean_cloud->at(i,j).z!=NAN) mean_cloud->at(i,j).z = means[2];
-					
-					if(mean_cloud->at(i,j).x==0.0f && mean_cloud->at(i,j).y==0.0f) { 
+
+					if(mean_cloud->at(i,j).x==0.0f && mean_cloud->at(i,j).y==0.0f) {
 						mean_cloud->at(i,j).x =NAN;
 						mean_cloud->at(i,j).y =NAN;
 						mean_cloud->at(i,j).z =NAN;
 					}
-					
-				}	
+
+				}
 			}
 		}
 		*/
 		*mean_cloud=*new_cloud;
-		
+
 	}
   	//DOWNSAMPLING---------------------------------------------------
   	pcl::PCLPointCloud2::Ptr in(new pcl::PCLPointCloud2);
@@ -109,7 +109,7 @@ void cloud_cb (const pcl::PCLPointCloud2ConstPtr& cloud_blob) {
   	new_cloud=true;
   	auto stop= high_resolution_clock::now();
 	auto duration = duration_cast<microseconds>(stop - start);
-	std::cout<<"Callback function time: " << duration.count()/1000 << " milliseconds" << std::endl;	
+	std::cout<<"Callback function time: " << duration.count()/1000 << " milliseconds" << std::endl;
 }
 
 void pivot_cb(const std_msgs::Float32::ConstPtr& msg){
@@ -453,6 +453,62 @@ void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud, ros::Pub
     obstacles_distance_pub.publish(msg);
 }
 
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/search/kdtree.h>
+
+std::vector<float> extractNearestClusterYZ(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud)
+{
+    std::vector<float> result;
+    if(cloud->points.empty())
+        return result;
+
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+    tree->setInputCloud(cloud);
+
+    std::vector<pcl::PointIndices> cluster_indices;
+    pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+    ec.setClusterTolerance(0.04);
+    ec.setMinClusterSize(5);
+    ec.setMaxClusterSize(10000);
+    ec.setSearchMethod(tree);
+    ec.setInputCloud(cloud);
+    ec.extract(cluster_indices);
+
+    if(cluster_indices.empty())
+        return result;
+
+    int best_idx = -1;
+    float best_dist = 9999.0f;
+
+    for(size_t i = 0; i < cluster_indices.size(); i++){
+        float cx = 0, cy = 0, cz = 0;
+
+        for(int idx : cluster_indices[i].indices){
+            cx += cloud->points[idx].x;
+            cy += cloud->points[idx].y;
+            cz += cloud->points[idx].z;
+        }
+
+        cx /= cluster_indices[i].indices.size();
+        cy /= cluster_indices[i].indices.size();
+        cz /= cluster_indices[i].indices.size();
+
+        float dist = std::sqrt(cx*cx + cy*cy + cz*cz);
+        if(dist < best_dist){
+            best_dist = dist;
+            best_idx = i;
+        }
+    }
+
+    for(int idx : cluster_indices[best_idx].indices){
+        result.push_back(cloud->points[idx].y);
+        result.push_back(cloud->points[idx].z);
+    }
+
+    return result;
+}
+
+
 void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud) {
     int jj=0, zz=0, rr=255;
     std::sort(planes.begin(), planes.end(), [](const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& a, const pcl::PointCloud<pcl::PointXYZRGB>::Ptr& b) {
@@ -491,6 +547,7 @@ int main (int argc, char** argv) {
     ros::Publisher pub_planes = nh.advertise<pcl::PCLPointCloud2> ("planes", 1);
     ros::Publisher pub_ground = nh.advertise<pcl::PCLPointCloud2> ("ground", 1);
 	ros::Publisher pub4 = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape_raw", 1);
+    ros::Publisher pub5 = nh.advertise<std_msgs::Float32MultiArray> ("obstacle_shape_raw_unseen", 1);
 	//ros::Publisher pub5 = nh.advertise<std_msgs::Bool> ("next_swing_leg", 1);
 	ros::Publisher pub6 = nh.advertise<std_msgs::Float32> ("CoM_height_raw", 1);
 	ros::Publisher pub7 =nh.advertise<std_msgs::Float32> ("foothold_raw", 1);
@@ -530,7 +587,7 @@ int main (int argc, char** argv) {
     ros::param::get("~camera_height", camera_height);
 
 	//float min_height_constraint = 0.9; //max CoM height allowed: 0.9 * leg length (SHOULD BE A PARAM??)
-	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length); 
+	//max_sl_const = 2* sqrt(1-pow(min_height_constraint,2)) *  (thigh_length+shin_length);
 	//max_step_length = max_sl_const;
     float final_step_height = -1.0;
     float slope_height = 1000000.0;
@@ -568,7 +625,7 @@ int main (int argc, char** argv) {
 			int ground_points=0;
 			bool alignment_z=false; //to check whether alignment on the z-axis has been performed
 			float tilt_ang;
-			
+
 			pcl::PointCloud<pcl::PointXYZRGB>::Ptr ground_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); //pointcloud containing ground plane points
 			ground_cloud->header = input_cloud->header; //needed to display in the right frame
 			ground_cloud->height=1; //unordered cloud
@@ -581,7 +638,7 @@ int main (int argc, char** argv) {
             *ground_cloud = *input_cloud;
 
 			//track bounds and conditions
-			float high_obs_bound_y=max_step_length; //nearest obstacle w. height >20 cm 
+			float high_obs_bound_y=max_step_length; //nearest obstacle w. height >20 cm
 			float bound_1 = (dist_bt_feet + feet_width + 0.02f);
 	    	float bound_2 = (dist_bt_feet-0.02f);
 	    	float bound_3 = max_step_length + 0.5f;
@@ -634,7 +691,7 @@ int main (int argc, char** argv) {
             planes_cloud->height=1;
 
 	  		//ALIGN THE POINTCLOUD WITH RVIZ FRAME(X-AXIS)------------------------------------------------------------
-	  		
+
 	  		if(x_alignment){
 				float mi_x;
 				float mi_y=10;
@@ -665,8 +722,8 @@ int main (int argc, char** argv) {
 		  		rotate_point_cloud_plane_v2(obs_cloud,n_align,n_x);
                 rotate_point_cloud_plane_v2(planes[closest_plane_index],n_align,n_x);
 	  		}
-	  		
-	  		
+
+
 	  		//POINTCLOUD TRANSLATION (Z-AXIS)--------------------------------------------------------------------------
 	  		camera_offs_z/=ground_points;
 	  		Eigen::Affine3f offset_transform = Eigen::Affine3f::Identity();
@@ -691,20 +748,20 @@ int main (int argc, char** argv) {
 	    		//condition_3 = obs_cloud->points[i].y < bound_3 && obs_cloud->points[i].y>=0; //neglect obstacles behind the camera so that feet are not considered
 	    		condition_3 = obs_cloud->points[i].y < bound_3; //NEW
 	    		if(condition_3){
-	    			if(condition_1) { 
+	    			if(condition_1) {
 	    				//if an obstacle is too high, cant step past that(applies to both legs)
 	    				if(obs_cloud->points[i].z>2.0 && obs_cloud->points[i].y<high_obs_bound_y){
 	    					high_obs_bound_y=obs_cloud->points[i].y;
-	    				
+
 	    				}
 	    				ltrack_obs_cloud->points.push_back(obs_cloud->points[i]);
-	    						
+
 	    			}
 	    			if(condition_2) {
 	    				//if an obstacle is too high, cant step past that(applies to both legs)
 	    				if(obs_cloud->points[i].z>2.0 && obs_cloud->points[i].y<high_obs_bound_y){
 	    					high_obs_bound_y=obs_cloud->points[i].y;
-	    				
+
 	    				}
 	    				rtrack_obs_cloud->points.push_back(obs_cloud->points[i]);
 	    			}
@@ -721,39 +778,39 @@ int main (int argc, char** argv) {
 	    			}
 	    		}
 	    	}
-	  
-	  		
+
+
 	  		ltrack_obs_cloud->width = ltrack_obs_cloud->points.size();
 	  		rtrack_obs_cloud->width = rtrack_obs_cloud->points.size();
-	  		
+
 	  		//FOOT RECOGNITION (ADDED 18/01/2024)
-	  		
+
 	  		std::sort(ltrack_obs_cloud->points.begin(),ltrack_obs_cloud->points.end(), cmp_xyzrgb());
 	  		std::sort(rtrack_obs_cloud->points.begin(),rtrack_obs_cloud->points.end(), cmp_xyzrgb());
 	  		float consec_dist=0; //measure distance between consecutive obstacle points (useful to know where the foot cluster ends)
 	  		float foot_tip_pos=-1;
-	  		
-	  		
-	  		
+
+
+
 	  		if(swing_leg==0){
 	  			std::cout<<"Checking distance between left foot and obs"<<std::endl;
 	  			for(int i=1; i< rtrack_obs_cloud->points.size(); i++) {
 	  				consec_dist = rtrack_obs_cloud->points[i].y - rtrack_obs_cloud->points[i-1].y;
-	  				if(consec_dist>0.05f ){ //threshold "a caso" che identifica la separazione tra il piede e gli altri ostacoli. 
+	  				if(consec_dist>0.05f ){ //threshold "a caso" che identifica la separazione tra il piede e gli altri ostacoli.
 						std::cout<<"Found distance for right foot"<<std::endl;
 	  					foot_tip_pos = rtrack_obs_cloud->points[i-1].y;
 						break;
 	  				}
 	  				if(i == rtrack_obs_cloud->points.size()-1) {
 	  					std::cout<<"Found distance for right foot. There are no obstacles on the track"<<std::endl;
-	  					foot_tip_pos = rtrack_obs_cloud->points[i].y;				
+	  					foot_tip_pos = rtrack_obs_cloud->points[i].y;
 	  				}
 	  			}
 	  			// ELIMINA PIEDE DA LISTA OSTACOLI
 	  			/*
 	  			while (ltrack_obs_cloud->points.size()>0 && ltrack_obs_cloud->points[0].y<=foot_tip_pos+0.04) {
 	  				ltrack_obs_cloud->points.erase(ltrack_obs_cloud->points.begin());
-	  			} 
+	  			}
 	  			*/
 	  		}
 	  		else if(swing_leg==1){
@@ -767,23 +824,23 @@ int main (int argc, char** argv) {
 	  				}
 	  				if(i == ltrack_obs_cloud->points.size()-1) {
 	  					std::cout<<"Found distance for left foot. There are no obstacles on the track"<<std::endl;
-	  					foot_tip_pos = ltrack_obs_cloud->points[i].y;				
+	  					foot_tip_pos = ltrack_obs_cloud->points[i].y;
 	  				}
 	  			}
 	  			// ELIMINA PIEDE DA LISTA OSTACOLI
 	  			/*
 	  			while (rtrack_obs_cloud->points.size()>0 && rtrack_obs_cloud->points[0].y<=foot_tip_pos+0.04) {
 	  				rtrack_obs_cloud->points.erase(rtrack_obs_cloud->points.begin());
-	  			} 
+	  			}
 	  			*/
 	  		}
 	  		if(foot_tip_pos==-1) consec_dist=0;
 	  		std::cout<<"Distance between pivot foot and obs is: " << consec_dist<<std::endl;
 	  		std::cout<<"Pivot tip position (camera coords) is: "<< foot_tip_pos<<std::endl;
-	  		
+
 	  		//END OF FOOT RECOGNITION
-	  		
-	  		
+
+
 	  		//PIVOT OBSTACLES SAVING
 	  		/*
 	  		if(!first_step){ //first step has already been performed, so we substitute the swinging leg obs with the previously saved ones
@@ -800,14 +857,14 @@ int main (int argc, char** argv) {
 	  		if(swing_leg==0){
 	  			old_pivot_obs_cloud->points = rtrack_obs_cloud->points;
 	  			old_pivot_obs_cloud->width = rtrack_obs_cloud->points.size();
-	  		
+
 	  		}
 	  		else if(swing_leg==1){
 	  			old_pivot_obs_cloud->points = ltrack_obs_cloud->points;
 	  			old_pivot_obs_cloud->width = ltrack_obs_cloud->points.size();
-	  		
+
 	  		}
-	  		
+
 	  		if(first_step) {	//initialize saved obs header, and set flag to substitute them in the next cycle
 	  			old_pivot_obs_cloud->header = input_cloud->header;
 	  			old_pivot_obs_cloud->height=1;
@@ -815,7 +872,7 @@ int main (int argc, char** argv) {
 	  		}
 	  		*/
 	  		//END OF PIVOT OBSTACLES SAVING
-	  		
+
 	  		//EVALUATE TRACKS----------------------------------------------------------------------------
 	  		std::vector<pcl::PointXYZRGB> tracks[2]; //points that could be stepped on(represented as tracks)
 	  		float stddev;
@@ -846,7 +903,7 @@ int main (int argc, char** argv) {
 		   						max_obs_dist = min_obs_dist + 0.05;
 		   						if(dist<min_obs_dist) {
 	 							score =0.0f;
-	  						}						
+	  						}
 	  						else {score =  dist>max_obs_dist? 1.0f: dist/max_obs_dist;}
 	  						if(score<min_score) min_score = score;
   							}
@@ -866,11 +923,11 @@ int main (int argc, char** argv) {
 		    					max_obs_dist = min_obs_dist + 0.05;
 		    					if(dist<min_obs_dist) {
 		  						score =0.0f;
-		 					}	
+		 					}
 		  					else {score =  dist>max_obs_dist? 1.0f: dist/max_obs_dist;}
 		  					if(score<min_score) min_score = score;
 	  						}
-	   					}	 
+	   					}
 	   					exponential_component = exp(-(pow((planes[closest_plane_index]->points[i].y-mean) / stddev,2.0)));
 	   					r = (uint8_t)255*min_score* exponential_component;
 	   					rgb = (uint32_t)r<<16;
@@ -887,7 +944,7 @@ int main (int argc, char** argv) {
                     planes[closest_plane_index]->points[i].rgb = *reinterpret_cast<float*>(&rgb);
 	    		}
 	  		}
-	  		
+
 	  		/* PRINT SWING LEG OBSTACLE TRACK
 	  		if(swing_leg==0){
 	  			std::cout<<"Obstacles on the left track: [ "<<std::endl;
@@ -957,11 +1014,11 @@ int main (int argc, char** argv) {
 						  		max_score_win_y_pos[i]= window_y_position;
 						  		best_window[i].clear();
 						  		best_window[i]=window;
-						  	}		
+						  	}
 				  		}
   						window_y_position+=0.01;
   					}
-  				
+
   				}
   			}
   			/*
@@ -973,12 +1030,12 @@ int main (int argc, char** argv) {
   			}
  			else {
  				std::cout << "Next step position: " << max_score_win_y_pos[swing_leg]<< std::endl;
- 			
- 			} 
- 			
+
+ 			}
+
  			*/
  			std::cout << "Next step position: " << max_score_win_y_pos[swing_leg]<< std::endl;
- 						
+
 	  		//Color selected foothold points
   			for(int i=0; i<2;i++) {
 	  			for(int k=0; k<best_window[i].size();k++){
@@ -996,7 +1053,7 @@ int main (int argc, char** argv) {
 		  				}
 	  				}
 	  			}
-  			}	  
+  			}
 
 	  		//PUBLISH DATA ------------------------------------------------------------------------------------------
 			pcl::PCLPointCloud2 outcloud;
@@ -1014,9 +1071,10 @@ int main (int argc, char** argv) {
             pcl::PCLPointCloud2 outcloud5;
             pcl::toPCLPointCloud2(*ground_cloud, outcloud5); //ground only
             pub_ground.publish(outcloud5);
-	  		
+
 	  		//publish obstacle shape of swing leg in sagittal plane
 	  		std::vector<float> o_p;
+            std::vector<float> o_p_unseen;
 	  		/*
 	  		if(swing_leg==-1){
 	  			if(next_swing_leg==0){
@@ -1035,23 +1093,18 @@ int main (int argc, char** argv) {
 	  			}
 	  		}
 	  		*/
-	  		if(swing_leg==0){
-	  			//std::sort(ltrack_obs_cloud->points.begin(), ltrack_obs_cloud->points.end(), cmp_xyzrgb());
-	  			std::cout<<"Sending left track obs"<<std::endl;
-	  			for(int i=0; i<ltrack_obs_cloud->points.size(); i++) {
-	  				o_p.push_back(ltrack_obs_cloud->points[i].y);
-	  				o_p.push_back(ltrack_obs_cloud->points[i].z);
-	  			}
-	  		
-	  		}
-	  		if(swing_leg==1){
-	  			//std::sort(rtrack_obs_cloud->points.begin(), rtrack_obs_cloud->points.end(), cmp_xyzrgb());
-	  			std::cout<<"Sending right track obs"<<std::endl;
-	  			for(int i=0; i<rtrack_obs_cloud->points.size(); i++) {
-	  				o_p.push_back(rtrack_obs_cloud->points[i].y);
-	  				o_p.push_back(rtrack_obs_cloud->points[i].z);
-	  			}
-	  		}
+
+            if(swing_leg==0){
+                o_p = extractNearestClusterYZ(ltrack_obs_cloud);
+                o_p_unseen = extractNearestClusterYZ(rtrack_obs_cloud);
+            }
+
+            if(swing_leg==1){
+                o_p = extractNearestClusterYZ(rtrack_obs_cloud);
+                o_p_unseen = extractNearestClusterYZ(ltrack_obs_cloud);
+            }
+
+
 	  		std_msgs::Float32MultiArray outp; //obstacle array: even indexes-> y coordinate   odd indexes->z coordinate
   			outp.layout.dim.push_back(std_msgs::MultiArrayDimension());
   			outp.layout.dim[0].size = o_p.size();
@@ -1060,6 +1113,16 @@ int main (int argc, char** argv) {
   			outp.data.clear();
   			outp.data.insert(outp.data.end(), o_p.begin(), o_p.end());
   			pub4.publish(outp);
+
+            std_msgs::Float32MultiArray outp_unseen;
+            outp_unseen.layout.dim.push_back(std_msgs::MultiArrayDimension());
+            outp_unseen.layout.dim[0].size = o_p_unseen.size();
+            outp_unseen.layout.dim[0].stride = 1;
+            outp_unseen.layout.dim[0].label = "y-z";
+            outp_unseen.data.clear();
+            outp_unseen.data.insert(outp_unseen.data.end(), o_p_unseen.begin(), o_p_unseen.end());
+            pub5.publish(outp_unseen);
+
   			//publish foothold
   			std_msgs::Float32 msg;
   			/*
@@ -1135,7 +1198,7 @@ int main (int argc, char** argv) {
             if (!enter_flag){
                 stair_edge.publish(msg_stair_edge);
             }
-  			
+
 	  		//EXECUTION TIME OF MAIN FUNCTION----------------------------------------------------------
 	  		auto stop= high_resolution_clock::now();
 	  		auto duration = duration_cast<microseconds>(stop - start);
