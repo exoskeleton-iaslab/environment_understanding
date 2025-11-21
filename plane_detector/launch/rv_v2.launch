@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <launch>
 	<!-- acquisition arguments -->
-	<arg name="front_foot_length" default='0.2'/>
-	<arg name="rear_foot_length" default='0.06'/>
-	<arg name="foot_width" default='0.17'/>
-	<arg name="dist_origin_foot" default='0.1'/>
+	<arg name="front_foot_length" default='0.18'/>
+	<arg name="rear_foot_length" default='0.04'/>
+	<arg name="foot_width" default='0.15'/>
+	<arg name="dist_origin_foot" default='0.05'/>
 	<arg name="max_step_length" default='0.8'/>
 	<arg name="max_step_height" default='0.4'/>
 	<arg name="ema_coeff" default='0'/>

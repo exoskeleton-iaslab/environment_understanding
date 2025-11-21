@@ -26,7 +26,10 @@
 #include <pcl/common/transforms.h>
 #include <pcl_ros/point_cloud.h>
 #include <std_msgs/Int8.h>
-
+#include <pcl/features/normal_3d.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/passthrough.h>
+#include <unordered_map>
 struct cmp_xyz {
 	inline bool operator() (const pcl::PointXYZ& pt1, const pcl::PointXYZ& pt2){
 		return (pt1.y < pt2.y);
@@ -129,7 +132,43 @@ float euclidean_dist(float p1_x, float p1_y, float p2_x, float p2_y) {
 float calc_angle_from_side_sin(float side, float hypotenuse ){ 
 return asin(side/hypotenuse);
 
-} 
+}
 
+void multiple_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_remaining);
 
+int define_ground_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud, float& camera_offs_z, int& ground_points);
 
+void align_point_cloud_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud,
+                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr& input_cloud_original,
+                         std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                         bool& alignment_z, bool& ref_acquired, float& reference_tilt, float& tilt_ang);
+
+void group_obstacles(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& obs_cloud, ros::Publisher& obstacles_distance_pub);
+void color_planes(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes, pcl::PointCloud<pcl::PointXYZRGB>::Ptr& planes_cloud);
+void transpose_z(pcl::PointCloud<pcl::PointXYZRGB>::Ptr& points, float z, float y);
+float find_minimal_euclidian_distance(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, const Eigen::Vector3f& p = Eigen::Vector3f(0.0f, 0.0f, 0.0f));
+void set_foothold_plane(std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr>& planes,
+                        pcl::PointCloud<pcl::PointXYZRGB>::Ptr& ground_cloud,
+                        int ground_plan_index, float feet_length, float camera_height, float mean_ground_z,
+                        int& closest_plane_index, float& high_step, float& current_angle);
+Eigen::Vector3f compute_normal_pca(pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane);
+
+template<typename T>
+T mostFrequentElement(std::queue<T> q) {
+    std::unordered_map<T, int> freq;
+    T most_frequent;
+    int max_count = 0;
+
+    while (!q.empty()) {
+        T val = q.front();
+        q.pop();
+        freq[val]++;
+        if (freq[val] > max_count) {
+            max_count = freq[val];
+            most_frequent = val;
+        }
+    }
+    return most_frequent;
+}
